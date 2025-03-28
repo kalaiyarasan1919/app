@@ -94,8 +94,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Log the incoming request body for debugging
       console.log("Project creation request body:", req.body);
       
+      // Handle date fields properly
+      const data = { ...req.body };
+      
+      // Convert deadline string to Date object if it exists
+      if (data.deadline && typeof data.deadline === 'string') {
+        try {
+          data.deadline = new Date(data.deadline);
+        } catch (dateError) {
+          return res.status(400).json({ 
+            message: `Invalid date format for deadline: ${dateError.message}` 
+          });
+        }
+      }
+      
       const validatedData = insertProjectSchema.parse({
-        ...req.body,
+        ...data,
         owner_id: req.user?.id
       });
 
@@ -134,7 +148,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Forbidden: Not project owner" });
       }
       
-      const updatedProject = await storage.updateProject(projectId, req.body);
+      // Handle date fields properly
+      const data = { ...req.body };
+      
+      // Convert deadline string to Date object if it exists
+      if (data.deadline && typeof data.deadline === 'string') {
+        try {
+          data.deadline = new Date(data.deadline);
+        } catch (dateError) {
+          return res.status(400).json({ 
+            message: `Invalid date format for deadline: ${dateError.message}` 
+          });
+        }
+      }
+      
+      const updatedProject = await storage.updateProject(projectId, data);
       
       await storage.createActivity({
         action: "update_project",
@@ -145,7 +173,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json(updatedProject);
     } catch (error) {
-      res.status(500).json({ message: "Failed to update project" });
+      if (error instanceof Error) {
+        res.status(400).json({ message: error.message });
+      } else {
+        res.status(500).json({ message: "Failed to update project" });
+      }
     }
   });
 
