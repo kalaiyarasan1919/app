@@ -12,7 +12,8 @@ import {
   insertCommentSchema,
   insertActivitySchema,
   TaskStatus,
-  ProjectStatus
+  ProjectStatus,
+  UserRole
 } from "@shared/schema";
 
 // Configure multer for file uploads
@@ -23,16 +24,16 @@ if (!fs.existsSync(uploadDir)) {
 
 const upload = multer({
   storage: multer.diskStorage({
-    destination: (req, file, cb) => {
+    destination: (req: Express.Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) => {
       cb(null, uploadDir);
     },
-    filename: (req, file, cb) => {
+    filename: (req: Express.Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) => {
       const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
       cb(null, uniqueSuffix + path.extname(file.originalname));
     }
   }),
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
+    fileSize: 50 * 1024 * 1024, // 50MB limit
   }
 });
 
@@ -101,9 +102,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (data.deadline && typeof data.deadline === 'string') {
         try {
           data.deadline = new Date(data.deadline);
-        } catch (dateError) {
+        } catch (dateError: unknown) {
           return res.status(400).json({ 
-            message: `Invalid date format for deadline: ${dateError.message}` 
+            message: `Invalid date format for deadline: ${dateError instanceof Error ? dateError.message : "Unknown error"}` 
           });
         }
       }
@@ -155,9 +156,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (data.deadline && typeof data.deadline === 'string') {
         try {
           data.deadline = new Date(data.deadline);
-        } catch (dateError) {
+        } catch (dateError: unknown) {
           return res.status(400).json({ 
-            message: `Invalid date format for deadline: ${dateError.message}` 
+            message: `Invalid date format for deadline: ${dateError instanceof Error ? dateError.message : "Unknown error"}` 
           });
         }
       }
@@ -218,7 +219,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Also include the project owner
       memberIds.push(project.owner_id);
       
-      const users = await storage.getUsersByIds([...new Set(memberIds)]);
+      const uniqueIds = Array.from(new Set(memberIds));
+      const users = await storage.getUsersByIds(uniqueIds);
       
       res.json(users);
     } catch (error) {
@@ -477,7 +479,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Get user details for each activity
       const userIds = activities.map(activity => activity.user_id);
-      const users = await storage.getUsersByIds([...new Set(userIds)]);
+      const uniqueIds = Array.from(new Set(userIds));
+      const users = await storage.getUsersByIds(uniqueIds);
       
       // Map users to activities
       const activitiesWithUsers = activities.map(activity => {
@@ -536,7 +539,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const projectId = req.query.projectId ? parseInt(req.query.projectId as string) : null;
       const taskId = req.query.taskId ? parseInt(req.query.taskId as string) : null;
       
-      let files = [];
+      let files: any[] = [];
       if (projectId) {
         files = await storage.getProjectFiles(projectId);
       } else if (taskId) {
@@ -552,18 +555,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // User routes
   app.get("/api/users", isAuthenticated, async (req, res) => {
     try {
-      let users;
+      let users: any[];
       const role = req.query.role as string;
       
       if (role) {
         users = await storage.getUsersByRole(role);
       } else {
-        users = Array.from((await storage.getAllProjects()).values());
+        // This should probably be getAllUsers instead of getAllProjects
+        users = await storage.getUsersByRole(UserRole.TEAM_MEMBER);
       }
       
       // Remove passwords from response
       const usersWithoutPasswords = users.map(user => {
-        const { password, ...userWithoutPassword } = user;
+        // Create a shallow copy without the password
+        const { password, ...userWithoutPassword } = user as any;
         return userWithoutPassword;
       });
       
