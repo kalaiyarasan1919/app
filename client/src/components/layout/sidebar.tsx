@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useSidebar } from "@/hooks/use-sidebar";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { X, CalendarDays, FolderClosed, CheckSquare, Users, MessageSquare, FileBox, Settings, LogOut, LayoutDashboard } from "lucide-react";
+import { X, CalendarDays, FolderClosed, CheckSquare, Users, MessageSquare, FileBox, Settings, LogOut, LayoutDashboard, Bot, MessageCircle } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useQuery } from "@tanstack/react-query";
 import { Project } from "@shared/schema";
@@ -51,6 +51,8 @@ export function Sidebar() {
     { href: "/messages", label: "Messages", icon: <MessageSquare className="mr-3 h-5 w-5" /> },
     { href: "/files", label: "Files", icon: <FileBox className="mr-3 h-5 w-5" /> },
     { href: "/calendar", label: "Calendar", icon: <CalendarDays className="mr-3 h-5 w-5" /> },
+    { href: "/chatbot", label: "AI Assistant", icon: <Bot className="mr-3 h-5 w-5" /> },
+    { href: "/feedback", label: "Feedback", icon: <MessageCircle className="mr-3 h-5 w-5" /> },
   ];
 
   const handleLogout = () => {

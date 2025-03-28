@@ -10,6 +10,8 @@ import MessagesPage from "@/pages/messages-page";
 import FilesPage from "@/pages/files-page";
 import CalendarPage from "@/pages/calendar-page";
 import SettingsPage from "@/pages/settings-page";
+import ChatbotPage from "@/pages/chatbot-page";
+import FeedbackPage from "@/pages/feedback-page";
 import { ProtectedRoute } from "@/lib/protected-route";
 
 function Router() {
@@ -23,6 +25,8 @@ function Router() {
       <ProtectedRoute path="/messages" component={MessagesPage} />
       <ProtectedRoute path="/files" component={FilesPage} />
       <ProtectedRoute path="/calendar" component={CalendarPage} />
+      <ProtectedRoute path="/chatbot" component={ChatbotPage} />
+      <ProtectedRoute path="/feedback" component={FeedbackPage} />
       <ProtectedRoute path="/settings" component={SettingsPage} />
       <Route path="/auth" component={AuthPage} />
       <Route component={NotFound} />
