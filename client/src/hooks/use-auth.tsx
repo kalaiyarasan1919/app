@@ -43,18 +43,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isLoading,
   } = useQuery<User | null>({
     queryKey: ["/api/user"],
-    queryFn: async ({ queryKey }) => {
-      try {
-        const res = await fetch(queryKey[0] as string, {
-          credentials: "include",
-        });
-        if (res.status === 401) return null;
-        if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
-        return await res.json();
-      } catch (error) {
-        return null;
-      }
-    },
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 0, // Always re-fetch when accessed
+    refetchOnWindowFocus: true, // Re-fetch when window gets focus
+    refetchInterval: 60000, // Re-fetch every minute to keep session alive
   });
 
   const loginMutation = useMutation({

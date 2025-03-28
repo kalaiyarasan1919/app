@@ -39,7 +39,8 @@ export function setupAuth(app: Express) {
     store: storage.sessionStore,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: false, // Set to false in development for easier testing
+      sameSite: 'lax', // Helps with CSRF protection but still allows redirects
       maxAge: 7 * 24 * 60 * 60 * 1000, // 1 week
     }
   };
@@ -107,7 +108,7 @@ export function setupAuth(app: Express) {
 
   // Login endpoint
   app.post("/api/login", (req, res, next) => {
-    passport.authenticate("local", (err, user, info) => {
+    passport.authenticate("local", (err: any, user: SelectUser | false, info: { message?: string } | undefined) => {
       if (err) return next(err);
       if (!user) return res.status(401).json({ message: info?.message || "Authentication failed" });
       
@@ -116,6 +117,7 @@ export function setupAuth(app: Express) {
         
         // Remove password from the response
         const { password, ...userWithoutPassword } = user;
+        console.log('User logged in:', user.username, 'Session ID:', req.sessionID);
         res.status(200).json(userWithoutPassword);
       });
     })(req, res, next);
@@ -131,12 +133,15 @@ export function setupAuth(app: Express) {
 
   // Get current user endpoint
   app.get("/api/user", (req, res) => {
+    console.log('Auth check - isAuthenticated:', req.isAuthenticated(), 'Session ID:', req.sessionID);
+    
     if (!req.isAuthenticated()) {
       return res.status(401).json({ message: "Not authenticated" });
     }
     
     // Remove password from the response
     const { password, ...userWithoutPassword } = req.user as SelectUser;
+    console.log('User authenticated:', userWithoutPassword.username);
     res.json(userWithoutPassword);
   });
 }
