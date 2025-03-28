@@ -91,6 +91,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/projects", isAuthenticated, async (req, res) => {
     try {
+      // Log the incoming request body for debugging
+      console.log("Project creation request body:", req.body);
+      
       const validatedData = insertProjectSchema.parse({
         ...req.body,
         owner_id: req.user?.id
@@ -108,6 +111,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.status(201).json(project);
     } catch (error) {
+      console.error("Project creation error:", error);
       if (error instanceof Error) {
         res.status(400).json({ message: error.message });
       } else {
