@@ -10,8 +10,15 @@ import { useAuth } from "@/hooks/use-auth";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Task, TaskPriority, TaskStatus, Project, User } from "@shared/schema";
+
 import { Loader2, Calendar } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+
+// Define interface for task data sent to API
+interface TaskSubmitData extends Omit<Partial<Task>, 'deadline'> {
+  deadline?: string | null;
+}
+
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { Calendar as CalendarComponent } from "@/components/ui/calendar";
@@ -59,7 +66,7 @@ export function NewTaskModal({ isOpen, onClose, initialTask }: NewTaskModalProps
 
   // Create/Update task mutation
   const mutation = useMutation({
-    mutationFn: async (taskData: Partial<Task>) => {
+    mutationFn: async (taskData: TaskSubmitData) => {
       if (initialTask) {
         // Update existing task
         const res = await apiRequest("PATCH", `/api/tasks/${initialTask.id}`, taskData);
@@ -126,7 +133,7 @@ export function NewTaskModal({ isOpen, onClose, initialTask }: NewTaskModalProps
 
     setIsLoading(true);
     
-    const taskData: Partial<Task> = {
+    const taskData: TaskSubmitData = {
       title,
       description: description || null,
       project_id: projectId,

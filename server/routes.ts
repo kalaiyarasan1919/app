@@ -5,6 +5,7 @@ import { setupAuth } from "./auth";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import { handleChatRequest } from "./chatbot";
 import { 
   insertProjectSchema, 
   insertTaskSchema, 
@@ -104,7 +105,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           data.deadline = new Date(data.deadline);
         } catch (dateError: unknown) {
           return res.status(400).json({ 
-            message: `Invalid date format for deadline: ${dateError instanceof Error ? dateError.message : "Unknown error" instanceof Error ? dateError.message : "Unknown error"}` 
+            message: `Invalid date format for deadline: ${dateError instanceof Error ? dateError.message : "Unknown error"}` 
           });
         }
       }
@@ -158,7 +159,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           data.deadline = new Date(data.deadline);
         } catch (dateError: unknown) {
           return res.status(400).json({ 
-            message: `Invalid date format for deadline: ${dateError instanceof Error ? dateError.message : "Unknown error" instanceof Error ? dateError.message : "Unknown error"}` 
+            message: `Invalid date format for deadline: ${dateError instanceof Error ? dateError.message : "Unknown error"}` 
           });
         }
       }
@@ -338,8 +339,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/tasks", isAuthenticated, async (req, res) => {
     try {
+      const taskData = { ...req.body };
+      
+      // Convert deadline string to Date object if it exists
+      if (taskData.deadline && typeof taskData.deadline === 'string') {
+        try {
+          taskData.deadline = new Date(taskData.deadline);
+        } catch (error) {
+          return res.status(400).json({ 
+            message: "Invalid date format for deadline" 
+          });
+        }
+      }
+      
       const validatedData = insertTaskSchema.parse({
-        ...req.body,
+        ...taskData,
         creator_id: req.user?.id
       });
       
@@ -363,7 +377,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/tasks/:id", isAuthenticated, async (req, res) => {
+  app.patch("/api/tasks/:id", isAuthenticated, async (req, res) => {
     try {
       const taskId = parseInt(req.params.id);
       const task = await storage.getTask(taskId);
@@ -374,8 +388,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const updatedData = { ...req.body };
       
+      // Convert deadline string to Date object if it exists
+      if (updatedData.deadline && typeof updatedData.deadline === 'string') {
+        try {
+          updatedData.deadline = new Date(updatedData.deadline);
+        } catch (error) {
+          return res.status(400).json({ 
+            message: "Invalid date format for deadline" 
+          });
+        }
+      }
+      
       // If marking as completed
-      if (req.body.status === TaskStatus.COMPLETED && task.status !== TaskStatus.COMPLETED) {
+      if (updatedData.status === TaskStatus.COMPLETED && task.status !== TaskStatus.COMPLETED) {
         updatedData.completed_at = new Date();
       }
       
@@ -391,7 +416,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json(updatedTask);
     } catch (error) {
-      res.status(500).json({ message: "Failed to update task" });
+      if (error instanceof Error) {
+        res.status(400).json({ message: error.message });
+      } else {
+        res.status(500).json({ message: "Failed to update task" });
+      }
+    }
+  });
+
+  app.put("/api/tasks/:id", isAuthenticated, async (req, res) => {
+    try {
+      const taskId = parseInt(req.params.id);
+      const task = await storage.getTask(taskId);
+      
+      if (!task) {
+        return res.status(404).json({ message: "Task not found" });
+      }
+      
+      const updatedData = { ...req.body };
+      
+      // Convert deadline string to Date object if it exists
+      if (updatedData.deadline && typeof updatedData.deadline === 'string') {
+        try {
+          updatedData.deadline = new Date(updatedData.deadline);
+        } catch (error) {
+          return res.status(400).json({ 
+            message: "Invalid date format for deadline" 
+          });
+        }
+      }
+      
+      // If marking as completed
+      if (updatedData.status === TaskStatus.COMPLETED && task.status !== TaskStatus.COMPLETED) {
+        updatedData.completed_at = new Date();
+      }
+      
+      const updatedTask = await storage.updateTask(taskId, updatedData);
+      
+      await storage.createActivity({
+        action: "update_task",
+        description: `updated task: ${task.title}`,
+        user_id: req.user!.id,
+        project_id: task.project_id,
+        task_id: task.id
+      });
+      
+      res.json(updatedTask);
+    } catch (error) {
+      if (error instanceof Error) {
+        res.status(400).json({ message: error.message });
+      } else {
+        res.status(500).json({ message: "Failed to update task" });
+      }
     }
   });
 
@@ -487,13 +563,111 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const user = users.find(u => u.id === activity.user_id);
         return {
           ...activity,
-          user: user ? { id: user.id, name: user.name, username: user.username, avatar: user.avatar } : null
+          user: user ? { id: user.id, name: user.name, username: user.username, avatar: user.avatar } : undefined
         };
       });
       
       res.json(activitiesWithUsers);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch activities" });
+    }
+  });
+
+  // Users routes
+  app.get("/api/users", isAuthenticated, async (req, res) => {
+    try {
+      let users;
+      const role = req.query.role as string;
+      
+      if (role) {
+        users = await storage.getUsersByRole(role);
+      } else {
+        // Return all users for now (in a real app, you'd want pagination)
+        // Get unique user IDs from project members, tasks, etc.
+        const allTasks = await storage.getAllTasks();
+        const userIds = new Set<number>();
+        
+        // Add assignees
+        allTasks.forEach(task => {
+          if (task.assignee_id) userIds.add(task.assignee_id);
+          if (task.creator_id) userIds.add(task.creator_id);
+        });
+        
+        // Add the current user
+        userIds.add(req.user!.id);
+        
+        users = await storage.getUsersByIds(Array.from(userIds));
+      }
+      
+      res.json(users);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch users" });
+    }
+  });
+
+  // Dashboard stats routes
+  app.get("/api/dashboard/stats", isAuthenticated, async (req, res) => {
+    try {
+      const allProjects = await storage.getAllProjects();
+      const allTasks = await storage.getAllTasks();
+      const now = new Date();
+      
+      // Calculate stats
+      const totalProjects = allProjects.length;
+      const tasksInProgress = allTasks.filter(task => task.status === TaskStatus.IN_PROGRESS).length;
+      const completedTasks = allTasks.filter(task => task.status === TaskStatus.COMPLETED).length;
+      
+      // Calculate tasks due soon (within 7 days)
+      const nextWeek = new Date(now);
+      nextWeek.setDate(nextWeek.getDate() + 7);
+      const dueSoonTasks = allTasks.filter(task => {
+        if (!task.deadline) return false;
+        const deadline = new Date(task.deadline);
+        return deadline >= now && deadline <= nextWeek && task.status !== TaskStatus.COMPLETED;
+      }).length;
+      
+      // Calculate completed tasks this week
+      const oneWeekAgo = new Date(now);
+      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+      const completedTasksThisWeek = allTasks.filter(task => {
+        if (!task.completed_at) return false;
+        const completedDate = new Date(task.completed_at);
+        return completedDate >= oneWeekAgo && completedDate <= now;
+      }).length;
+      
+      // Calculate new projects this month
+      const oneMonthAgo = new Date(now);
+      oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+      const newProjectsThisMonth = allProjects.filter(project => {
+        // Note: this assumes project creation date is tracked
+        // In a real app, you would have a created_at field
+        return project.created_at && new Date(project.created_at) >= oneMonthAgo;
+      }).length;
+      
+      // Get team members count
+      const projectMembers = new Set<number>();
+      for (const project of allProjects) {
+        const members = await storage.getProjectMembers(project.id);
+        members.forEach(member => projectMembers.add(member.user_id));
+        projectMembers.add(project.owner_id); // Add project owner
+      }
+      const teamMembers = projectMembers.size;
+      
+      // Mock online users (in a real app, this would come from an active sessions count)
+      const onlineUsers = Math.min(3, teamMembers);
+      
+      res.json({
+        totalProjects,
+        tasksInProgress,
+        completedTasks,
+        teamMembers,
+        newProjectsThisMonth,
+        dueSoonTasks,
+        completedTasksThisWeek,
+        onlineUsers
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch dashboard stats" });
     }
   });
 
@@ -504,81 +678,174 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "No file uploaded" });
       }
       
-      const { project_id, task_id } = req.body;
+      const { projectId, taskId, description } = req.body;
       
       const fileData = {
-        filename: req.file.originalname,
-        filepath: req.file.path,
+        name: req.file.originalname, 
+        path: req.file.filename,
+        type: req.file.mimetype,
         size: req.file.size,
-        mimetype: req.file.mimetype,
-        project_id: project_id ? parseInt(project_id) : undefined,
-        task_id: task_id ? parseInt(task_id) : undefined,
-        uploader_id: req.user!.id
+        project_id: projectId ? parseInt(projectId) : null,
+        task_id: taskId ? parseInt(taskId) : null,
+        uploaded_by: req.user!.id,
+        description: description || null
       };
       
       const file = await storage.createFile(fileData);
       
       // Create activity
-      const description = `uploaded file: ${file.filename}`;
-      await storage.createActivity({
-        action: "upload_file",
-        description,
-        user_id: req.user!.id,
-        project_id: file.project_id,
-        task_id: file.task_id
-      });
+      if (taskId) {
+        const task = await storage.getTask(parseInt(taskId));
+        await storage.createActivity({
+          action: "upload_file",
+          description: `uploaded file to task: ${task?.title || 'a task'}`,
+          user_id: req.user!.id,
+          project_id: task?.project_id,
+          task_id: parseInt(taskId)
+        });
+      } else if (projectId) {
+        const project = await storage.getProject(parseInt(projectId));
+        await storage.createActivity({
+          action: "upload_file",
+          description: `uploaded file to project: ${project?.name || 'a project'}`,
+          user_id: req.user!.id,
+          project_id: parseInt(projectId)
+        });
+      }
       
       res.status(201).json(file);
     } catch (error) {
-      res.status(500).json({ message: "Failed to upload file" });
+      if (error instanceof Error) {
+        res.status(400).json({ message: error.message });
+      } else {
+        res.status(500).json({ message: "Failed to upload file" });
+      }
     }
   });
 
   app.get("/api/files", isAuthenticated, async (req, res) => {
     try {
+      let files;
       const projectId = req.query.projectId ? parseInt(req.query.projectId as string) : null;
       const taskId = req.query.taskId ? parseInt(req.query.taskId as string) : null;
       
-      let files: any[] = [];
       if (projectId) {
         files = await storage.getProjectFiles(projectId);
       } else if (taskId) {
         files = await storage.getTaskFiles(taskId);
+      } else {
+        // Get all files for the current user's projects
+        const userProjects = await storage.getUserProjects(req.user!.id);
+        const projectIds = userProjects.map(project => project.id);
+        
+        // Collect files from all the user's projects
+        files = [];
+        for (const projectId of projectIds) {
+          const projectFiles = await storage.getProjectFiles(projectId);
+          files.push(...projectFiles);
+        }
       }
       
-      res.json(files);
+      // Enhance files with project and user info
+      const enhancedFiles = await Promise.all(files.map(async (file) => {
+        const uploader = await storage.getUser(file.uploaded_by);
+        let project = null;
+        let task = null;
+        
+        if (file.project_id) {
+          project = await storage.getProject(file.project_id);
+        }
+        
+        if (file.task_id) {
+          task = await storage.getTask(file.task_id);
+        }
+        
+        return {
+          ...file,
+          uploader: uploader ? {
+            id: uploader.id,
+            name: uploader.name,
+            username: uploader.username
+          } : null,
+          project: project ? {
+            id: project.id,
+            name: project.name
+          } : null,
+          task: task ? {
+            id: task.id,
+            title: task.title
+          } : null
+        };
+      }));
+      
+      res.json(enhancedFiles);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch files" });
     }
   });
 
-  // User routes
-  app.get("/api/users", isAuthenticated, async (req, res) => {
-    try {
-      let users: any[];
-      const role = req.query.role as string;
-      
-      if (role) {
-        users = await storage.getUsersByRole(role);
-      } else {
-        // This should probably be getAllUsers instead of getAllProjects
-        users = await storage.getUsersByRole(UserRole.TEAM_MEMBER);
-      }
-      
-      // Remove passwords from response
-      const usersWithoutPasswords = users.map(user => {
-        // Create a shallow copy without the password
-        const { password, ...userWithoutPassword } = user as any;
-        return userWithoutPassword;
-      });
-      
-      res.json(usersWithoutPasswords);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch users" });
+  app.get("/uploads/:filename", async (req, res) => {
+    const filePath = path.join(uploadDir, req.params.filename);
+    if (fs.existsSync(filePath)) {
+      res.sendFile(filePath);
+    } else {
+      res.status(404).json({ message: "File not found" });
     }
   });
 
-  // Create HTTP server
+  app.delete("/api/files/:id", isAuthenticated, async (req, res) => {
+    try {
+      const fileId = parseInt(req.params.id);
+      const file = await storage.getFile(fileId);
+      
+      if (!file) {
+        return res.status(404).json({ message: "File not found" });
+      }
+      
+      // Check permissions - only file uploader, project owner, or admin can delete
+      if (file.uploaded_by !== req.user?.id) {
+        // Check if user is project owner
+        let hasPermission = false;
+        
+        if (file.project_id) {
+          const project = await storage.getProject(file.project_id);
+          if (project && project.owner_id === req.user?.id) {
+            hasPermission = true;
+          }
+        }
+        
+        // Check if user is admin
+        if (req.user?.role === "admin") {
+          hasPermission = true;
+        }
+        
+        if (!hasPermission) {
+          return res.status(403).json({ message: "Forbidden: Insufficient permissions to delete this file" });
+        }
+      }
+      
+      // Delete the physical file
+      try {
+        fs.unlinkSync(path.join(uploadDir, file.path));
+      } catch (err) {
+        console.error("Error deleting file from filesystem:", err);
+        // Continue with deletion from database even if file is not found
+      }
+      
+      await storage.deleteFile(fileId);
+      
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete file" });
+    }
+  });
+
+  // Chatbot endpoint
+  app.post("/api/chatbot", isAuthenticated, async (req, res) => {
+    handleChatRequest(req, res);
+  });
+
   const httpServer = createServer(app);
+
   return httpServer;
 }
