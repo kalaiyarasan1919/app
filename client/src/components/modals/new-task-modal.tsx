@@ -29,7 +29,7 @@ export function NewTaskModal({ isOpen, onClose, initialTask }: NewTaskModalProps
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [projectId, setProjectId] = useState<number | undefined>(undefined);
-  const [assigneeId, setAssigneeId] = useState<number | undefined>(undefined);
+  const [assigneeId, setAssigneeId] = useState<number | null | undefined>(undefined);
   const [priority, setPriority] = useState<TaskPriority>(TaskPriority.MEDIUM);
   const [status, setStatus] = useState<TaskStatus>(TaskStatus.TODO);
   const [dueDate, setDueDate] = useState<Date | undefined>(undefined);
@@ -99,7 +99,7 @@ export function NewTaskModal({ isOpen, onClose, initialTask }: NewTaskModalProps
       setAssigneeId(initialTask.assignee_id);
       setPriority(initialTask.priority as TaskPriority);
       setStatus(initialTask.status as TaskStatus);
-      setDueDate(initialTask.due_date ? new Date(initialTask.due_date) : undefined);
+      setDueDate(initialTask.deadline ? new Date(initialTask.deadline) : undefined);
     } else {
       // Default values for new task
       setTitle("");
@@ -133,7 +133,7 @@ export function NewTaskModal({ isOpen, onClose, initialTask }: NewTaskModalProps
       assignee_id: assigneeId,
       priority,
       status,
-      due_date: dueDate ? dueDate.toISOString() : null,
+      deadline: dueDate ? dueDate.toISOString() : null,
       creator_id: initialTask?.creator_id || user?.id,
     };
     
