@@ -105,15 +105,15 @@ export function Sidebar() {
             {navItems.map((item) => (
               <li key={item.href}>
                 <Link href={item.href}>
-                  <a
+                  <div
                     className={cn(
-                      "flex items-center rounded-md py-2 px-3 text-gray-600 hover:bg-gray-100",
+                      "flex items-center rounded-md py-2 px-3 text-gray-600 hover:bg-gray-100 cursor-pointer",
                       location === item.href && "bg-indigo-50 text-indigo-600"
                     )}
                   >
                     {item.icon}
                     <span>{item.label}</span>
-                  </a>
+                  </div>
                 </Link>
               </li>
             ))}
@@ -128,7 +128,7 @@ export function Sidebar() {
                 {recentProjects.map((project) => (
                   <li key={project.id}>
                     <Link href={`/projects/${project.id}`}>
-                      <a className="flex items-center rounded-md py-2 px-3 hover:bg-gray-100 text-gray-600">
+                      <div className="flex items-center rounded-md py-2 px-3 hover:bg-gray-100 text-gray-600 cursor-pointer">
                         <span 
                           className={cn(
                             "w-2 h-2 rounded-full mr-3",
@@ -139,7 +139,7 @@ export function Sidebar() {
                           )}
                         />
                         <span className="truncate">{project.name}</span>
-                      </a>
+                      </div>
                     </Link>
                   </li>
                 ))}
@@ -150,10 +150,10 @@ export function Sidebar() {
         
         <div className="p-4 border-t border-gray-200">
           <Link href="/settings">
-            <a className="flex items-center text-gray-600 hover:text-gray-800 mb-3">
+            <div className="flex items-center text-gray-600 hover:text-gray-800 mb-3 cursor-pointer">
               <Settings className="mr-3 h-5 w-5" />
               <span>Settings</span>
-            </a>
+            </div>
           </Link>
           <Button 
             variant="ghost" 
