@@ -26,9 +26,15 @@ export default function AuthPage() {
   const [registerRole, setRegisterRole] = useState<UserRole>(UserRole.TEAM_MEMBER);
 
   // If user is already logged in, redirect to dashboard
+  // Add a more robust redirection when user is logged in
   useEffect(() => {
     if (user) {
-      navigate("/");
+      console.log("User authenticated, redirecting to dashboard");
+      
+      // Use a timeout to ensure the state has time to update
+      setTimeout(() => {
+        navigate("/");
+      }, 100);
     }
   }, [user, navigate]);
 
