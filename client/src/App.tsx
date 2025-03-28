@@ -5,6 +5,11 @@ import AuthPage from "@/pages/auth-page";
 import DashboardPage from "@/pages/dashboard-page";
 import ProjectPage from "@/pages/project-page";
 import TasksPage from "@/pages/tasks-page";
+import TeamPage from "@/pages/team-page";
+import MessagesPage from "@/pages/messages-page";
+import FilesPage from "@/pages/files-page";
+import CalendarPage from "@/pages/calendar-page";
+import SettingsPage from "@/pages/settings-page";
 import { ProtectedRoute } from "@/lib/protected-route";
 
 function Router() {
@@ -14,6 +19,11 @@ function Router() {
       <ProtectedRoute path="/projects" component={ProjectPage} />
       <ProtectedRoute path="/projects/:id" component={ProjectPage} />
       <ProtectedRoute path="/tasks" component={TasksPage} />
+      <ProtectedRoute path="/team" component={TeamPage} />
+      <ProtectedRoute path="/messages" component={MessagesPage} />
+      <ProtectedRoute path="/files" component={FilesPage} />
+      <ProtectedRoute path="/calendar" component={CalendarPage} />
+      <ProtectedRoute path="/settings" component={SettingsPage} />
       <Route path="/auth" component={AuthPage} />
       <Route component={NotFound} />
     </Switch>
