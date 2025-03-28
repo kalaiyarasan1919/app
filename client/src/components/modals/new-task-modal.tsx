@@ -1,38 +1,41 @@
 import { useState, useEffect } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Calendar } from "@/components/ui/calendar";
-import { CalendarIcon, Loader2, Upload } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useAuth } from "@/hooks/use-auth";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { format } from "date-fns";
+import { Task, TaskPriority, TaskStatus, Project, User } from "@shared/schema";
+import { Loader2, Calendar } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { User, Project, Task, TaskPriority, TaskStatus } from "@shared/schema";
+import { format } from "date-fns";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 
 interface NewTaskModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialTask?: Task;
-  projectId?: number;
 }
 
-export function NewTaskModal({ isOpen, onClose, initialTask, projectId }: NewTaskModalProps) {
+export function NewTaskModal({ isOpen, onClose, initialTask }: NewTaskModalProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const [isLoading, setIsLoading] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [projectId, setProjectId] = useState<number | undefined>(undefined);
+  const [assigneeId, setAssigneeId] = useState<number | undefined>(undefined);
   const [priority, setPriority] = useState<TaskPriority>(TaskPriority.MEDIUM);
-  const [assigneeId, setAssigneeId] = useState<number | null>(null);
-  const [deadline, setDeadline] = useState<Date | undefined>(undefined);
-  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const [status, setStatus] = useState<TaskStatus>(TaskStatus.TODO);
+  const [dueDate, setDueDate] = useState<Date | undefined>(undefined);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
 
-  // Get projects
+  // Fetch projects for dropdown
   const { data: projects = [] } = useQuery<Project[]>({
     queryKey: ["/api/projects"],
     queryFn: async () => {
@@ -40,56 +43,43 @@ export function NewTaskModal({ isOpen, onClose, initialTask, projectId }: NewTas
       if (!res.ok) throw new Error("Failed to fetch projects");
       return res.json();
     },
+    enabled: isOpen,
   });
 
-  // Get users for assignee dropdown
-  const { data: users = [] } = useQuery<User[]>({
+  // Fetch team members for assignee dropdown
+  const { data: teamMembers = [] } = useQuery<User[]>({
     queryKey: ["/api/users"],
     queryFn: async () => {
       const res = await fetch("/api/users", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch users");
+      if (!res.ok) throw new Error("Failed to fetch team members");
       return res.json();
     },
+    enabled: isOpen,
   });
 
-  // Reset form when modal opens or initialTask changes
-  useEffect(() => {
-    if (isOpen) {
+  // Create/Update task mutation
+  const mutation = useMutation({
+    mutationFn: async (taskData: Partial<Task>) => {
       if (initialTask) {
-        setTitle(initialTask.title);
-        setDescription(initialTask.description || "");
-        setSelectedProjectId(initialTask.project_id);
-        setPriority(initialTask.priority as TaskPriority);
-        setAssigneeId(initialTask.assignee_id || null);
-        setDeadline(initialTask.deadline ? new Date(initialTask.deadline) : undefined);
+        // Update existing task
+        const res = await apiRequest("PATCH", `/api/tasks/${initialTask.id}`, taskData);
+        return res.json();
       } else {
-        setTitle("");
-        setDescription("");
-        setSelectedProjectId(projectId || null);
-        setPriority(TaskPriority.MEDIUM);
-        setAssigneeId(null);
-        setDeadline(undefined);
-      }
-    }
-  }, [isOpen, initialTask, projectId]);
-
-  // Create or update task mutation
-  const taskMutation = useMutation({
-    mutationFn: async (taskData: any) => {
-      if (initialTask) {
-        await apiRequest("PUT", `/api/tasks/${initialTask.id}`, taskData);
-      } else {
-        await apiRequest("POST", "/api/tasks", taskData);
+        // Create new task
+        const res = await apiRequest("POST", "/api/tasks", taskData);
+        return res.json();
       }
     },
     onSuccess: () => {
+      // Invalidate tasks queries to refetch
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
       toast({
         title: initialTask ? "Task updated" : "Task created",
-        description: initialTask ? "The task has been updated successfully" : "A new task has been created",
+        description: initialTask 
+          ? "The task has been updated successfully." 
+          : "The new task has been created successfully.",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
-      onClose();
+      handleClose();
     },
     onError: (error) => {
       toast({
@@ -97,103 +87,152 @@ export function NewTaskModal({ isOpen, onClose, initialTask, projectId }: NewTas
         description: `Failed to ${initialTask ? "update" : "create"} task: ${error.message}`,
         variant: "destructive",
       });
-    },
+    }
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Set form values when editing a task
+  useEffect(() => {
+    if (initialTask) {
+      setTitle(initialTask.title);
+      setDescription(initialTask.description || "");
+      setProjectId(initialTask.project_id);
+      setAssigneeId(initialTask.assignee_id);
+      setPriority(initialTask.priority as TaskPriority);
+      setStatus(initialTask.status as TaskStatus);
+      setDueDate(initialTask.due_date ? new Date(initialTask.due_date) : undefined);
+    } else {
+      // Default values for new task
+      setTitle("");
+      setDescription("");
+      setProjectId(undefined);
+      setAssigneeId(user?.id);
+      setPriority(TaskPriority.MEDIUM);
+      setStatus(TaskStatus.TODO);
+      setDueDate(undefined);
+    }
+  }, [initialTask, user]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!title.trim()) {
       toast({
-        title: "Validation error",
-        description: "Task title is required",
+        title: "Missing information",
+        description: "Please enter a task title.",
         variant: "destructive",
       });
       return;
     }
 
-    if (!selectedProjectId) {
-      toast({
-        title: "Validation error",
-        description: "Please select a project",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const taskData = {
+    setIsLoading(true);
+    
+    const taskData: Partial<Task> = {
       title,
-      description: description.trim() || undefined,
-      project_id: selectedProjectId,
+      description: description || null,
+      project_id: projectId,
+      assignee_id: assigneeId,
       priority,
-      assignee_id: assigneeId || undefined,
-      deadline: deadline?.toISOString() || undefined,
-      status: initialTask?.status || TaskStatus.TODO,
+      status,
+      due_date: dueDate ? dueDate.toISOString() : null,
+      creator_id: initialTask?.creator_id || user?.id,
     };
+    
+    mutation.mutate(taskData);
+  };
 
-    taskMutation.mutate(taskData);
+  const handleClose = () => {
+    setIsLoading(false);
+    onClose();
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-md">
+    <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
+      <DialogContent className="sm:max-w-[550px]">
         <DialogHeader>
-          <DialogTitle>{initialTask ? "Edit Task" : "Add New Task"}</DialogTitle>
+          <DialogTitle>{initialTask ? "Edit Task" : "Create New Task"}</DialogTitle>
         </DialogHeader>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
+        
+        <form onSubmit={handleSubmit} className="space-y-4 py-4">
           <div className="space-y-2">
-            <Label htmlFor="task-title">Task Title</Label>
+            <Label htmlFor="title">Task Title</Label>
             <Input
-              id="task-title"
+              id="title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Enter task title"
-              required
             />
           </div>
-
+          
           <div className="space-y-2">
-            <Label htmlFor="task-description">Description</Label>
+            <Label htmlFor="description">Description</Label>
             <Textarea
-              id="task-description"
+              id="description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Enter task description"
-              rows={3}
+              placeholder="Describe the task..."
+              className="min-h-[100px]"
             />
           </div>
-
-          <div className="grid grid-cols-2 gap-4">
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="task-project">Project</Label>
+              <Label htmlFor="project">Project</Label>
               <Select
-                value={selectedProjectId?.toString() || ""}
-                onValueChange={(value) => setSelectedProjectId(parseInt(value))}
+                value={projectId?.toString()}
+                onValueChange={(value) => setProjectId(parseInt(value))}
               >
-                <SelectTrigger>
+                <SelectTrigger id="project">
                   <SelectValue placeholder="Select project" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectGroup>
-                    {projects.map((project) => (
+                  {projects.length === 0 ? (
+                    <SelectItem value="no-projects" disabled>
+                      No projects available
+                    </SelectItem>
+                  ) : (
+                    projects.map((project) => (
                       <SelectItem key={project.id} value={project.id.toString()}>
                         {project.name}
                       </SelectItem>
-                    ))}
-                  </SelectGroup>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
             </div>
-
+            
             <div className="space-y-2">
-              <Label htmlFor="task-priority">Priority</Label>
+              <Label htmlFor="assignee">Assignee</Label>
+              <Select
+                value={assigneeId?.toString()}
+                onValueChange={(value) => setAssigneeId(parseInt(value))}
+              >
+                <SelectTrigger id="assignee">
+                  <SelectValue placeholder="Select assignee" />
+                </SelectTrigger>
+                <SelectContent>
+                  {teamMembers.length === 0 ? (
+                    <SelectItem value="no-members" disabled>
+                      No team members available
+                    </SelectItem>
+                  ) : (
+                    teamMembers.map((member) => (
+                      <SelectItem key={member.id} value={member.id.toString()}>
+                        {member.name}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="priority">Priority</Label>
               <Select
                 value={priority}
                 onValueChange={(value) => setPriority(value as TaskPriority)}
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select priority" />
+                <SelectTrigger id="priority">
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={TaskPriority.LOW}>Low</SelectItem>
@@ -202,80 +241,62 @@ export function NewTaskModal({ isOpen, onClose, initialTask, projectId }: NewTas
                 </SelectContent>
               </Select>
             </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
+            
             <div className="space-y-2">
-              <Label>Deadline</Label>
-              <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "w-full justify-start text-left font-normal",
-                      !deadline && "text-muted-foreground"
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {deadline ? format(deadline, "PPP") : "Select date"}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0">
-                  <Calendar
-                    mode="single"
-                    selected={deadline}
-                    onSelect={(date) => {
-                      setDeadline(date);
-                      setIsCalendarOpen(false);
-                    }}
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="task-assignee">Assignee</Label>
+              <Label htmlFor="status">Status</Label>
               <Select
-                value={assigneeId?.toString() || ""}
-                onValueChange={(value) => value ? setAssigneeId(parseInt(value)) : setAssigneeId(null)}
+                value={status}
+                onValueChange={(value) => setStatus(value as TaskStatus)}
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="Assign to..." />
+                <SelectTrigger id="status">
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Unassigned</SelectItem>
-                  {users.map((user) => (
-                    <SelectItem key={user.id} value={user.id.toString()}>
-                      {user.name}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value={TaskStatus.TODO}>To Do</SelectItem>
+                  <SelectItem value={TaskStatus.IN_PROGRESS}>In Progress</SelectItem>
+                  <SelectItem value={TaskStatus.REVIEW}>In Review</SelectItem>
+                  <SelectItem value={TaskStatus.COMPLETED}>Completed</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
-
+          
           <div className="space-y-2">
-            <Label>Attachments</Label>
-            <div className="border border-dashed border-gray-300 rounded-md p-6 text-center">
-              <Upload className="h-8 w-8 mx-auto text-gray-400" />
-              <p className="text-sm text-gray-500 mt-2">
-                Drag files here or click to browse
-              </p>
-              <Button variant="outline" size="sm" className="mt-2">
-                Browse Files
-              </Button>
-            </div>
+            <Label htmlFor="due-date">Due Date</Label>
+            <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  id="due-date"
+                  variant="outline"
+                  className={cn(
+                    "w-full justify-start text-left font-normal",
+                    !dueDate && "text-muted-foreground"
+                  )}
+                >
+                  <Calendar className="mr-2 h-4 w-4" />
+                  {dueDate ? format(dueDate, "PPP") : "Select a date"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <CalendarComponent
+                  mode="single"
+                  selected={dueDate}
+                  onSelect={(date) => {
+                    setDueDate(date);
+                    setDatePickerOpen(false);
+                  }}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
           </div>
-
-          <DialogFooter className="sm:justify-end">
-            <Button variant="outline" type="button" onClick={onClose}>
+          
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={handleClose} disabled={isLoading}>
               Cancel
             </Button>
-            <Button type="submit" disabled={taskMutation.isPending}>
-              {taskMutation.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
+            <Button type="submit" disabled={isLoading}>
+              {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {initialTask ? "Update Task" : "Create Task"}
             </Button>
           </DialogFooter>
