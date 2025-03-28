@@ -501,15 +501,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "No file uploaded" });
       }
       
-      const { projectId, taskId } = req.body;
+      const { project_id, task_id } = req.body;
       
       const fileData = {
         filename: req.file.originalname,
         filepath: req.file.path,
         size: req.file.size,
         mimetype: req.file.mimetype,
-        project_id: projectId ? parseInt(projectId) : undefined,
-        task_id: taskId ? parseInt(taskId) : undefined,
+        project_id: project_id ? parseInt(project_id) : undefined,
+        task_id: task_id ? parseInt(task_id) : undefined,
         uploader_id: req.user!.id
       };
       
