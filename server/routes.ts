@@ -104,7 +104,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           data.deadline = new Date(data.deadline);
         } catch (dateError: unknown) {
           return res.status(400).json({ 
-            message: `Invalid date format for deadline: ${dateError instanceof Error ? dateError.message : "Unknown error"}` 
+            message: `Invalid date format for deadline: ${dateError instanceof Error ? dateError.message : "Unknown error" instanceof Error ? dateError.message : "Unknown error"}` 
           });
         }
       }
@@ -158,7 +158,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           data.deadline = new Date(data.deadline);
         } catch (dateError: unknown) {
           return res.status(400).json({ 
-            message: `Invalid date format for deadline: ${dateError instanceof Error ? dateError.message : "Unknown error"}` 
+            message: `Invalid date format for deadline: ${dateError instanceof Error ? dateError.message : "Unknown error" instanceof Error ? dateError.message : "Unknown error"}` 
           });
         }
       }

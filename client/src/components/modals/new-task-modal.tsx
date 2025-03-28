@@ -133,7 +133,7 @@ export function NewTaskModal({ isOpen, onClose, initialTask }: NewTaskModalProps
       assignee_id: assigneeId,
       priority,
       status,
-      deadline: dueDate ? new Date(dueDate) : null,
+      deadline: dueDate ? dueDate.toISOString() : null,
       creator_id: initialTask?.creator_id || user?.id,
     };
     
