@@ -103,8 +103,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (data.deadline && typeof data.deadline === 'string') {
         try {
           data.deadline = new Date(data.deadline);
-        } catch (error) {
-          const dateError = error as Error;
+        } catch (error) {\n          const dateError = error as Error;
           return res.status(400).json({ 
             message: `Invalid date format for deadline: ${dateError.message || "Unknown error"}` 
           });
@@ -158,8 +157,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (data.deadline && typeof data.deadline === 'string') {
         try {
           data.deadline = new Date(data.deadline);
-        } catch (error) {
-          const dateError = error as Error;
+        } catch (dateError: unknown) {
           return res.status(400).json({ 
             message: `Invalid date format for deadline: ${dateError.message || "Unknown error"}` 
           });
@@ -507,30 +505,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/tasks/:id/comments", isAuthenticated, async (req, res) => {
+  app.post("/api/comments", isAuthenticated, async (req, res) => {
     try {
-      const taskId = parseInt(req.params.id);
-      const task = await storage.getTask(taskId);
-      
-      if (!task) {
-        return res.status(404).json({ message: "Task not found" });
-      }
-      
       const validatedData = insertCommentSchema.parse({
-        task_id: taskId,
-        user_id: req.user!.id,
-        content: req.body.content
+        ...req.body,
+        user_id: req.user?.id
       });
       
       const comment = await storage.createComment(validatedData);
       
-      await storage.createActivity({
-        action: "comment_task",
-        description: `commented on task: ${task.title}`,
-        user_id: req.user!.id,
-        project_id: task.project_id,
-        task_id: task.id
-      });
+      // Create an activity for task comment
+      if (comment.task_id) {
+        const task = await storage.getTask(comment.task_id);
+        await storage.createActivity({
+          action: "comment",
+          description: `commented on task: ${task?.title || 'a task'}`,
+          user_id: req.user!.id,
+          project_id: task?.project_id,
+          task_id: comment.task_id
+        });
+      }
+      
+      // Create an activity for project comment
+      if (comment.project_id) {
+        const project = await storage.getProject(comment.project_id);
+        await storage.createActivity({
+          action: "comment",
+          description: `commented on project: ${project?.name || 'a project'}`,
+          user_id: req.user!.id,
+          project_id: comment.project_id
+        });
+      }
       
       res.status(201).json(comment);
     } catch (error) {
@@ -542,52 +547,158 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // File uploads routes
+  // Activities routes
+  app.get("/api/activities", isAuthenticated, async (req, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
+      const activities = await storage.getRecentActivities(limit);
+      
+      // Get user details for each activity
+      const userIds = activities.map(activity => activity.user_id);
+      const uniqueIds = Array.from(new Set(userIds));
+      const users = await storage.getUsersByIds(uniqueIds);
+      
+      // Map users to activities
+      const activitiesWithUsers = activities.map(activity => {
+        const user = users.find(u => u.id === activity.user_id);
+        return {
+          ...activity,
+          user: user ? { id: user.id, name: user.name, username: user.username, avatar: user.avatar } : undefined
+        };
+      });
+      
+      res.json(activitiesWithUsers);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch activities" });
+    }
+  });
+
+  // Users routes
+  app.get("/api/users", isAuthenticated, async (req, res) => {
+    try {
+      let users;
+      const role = req.query.role as string;
+      
+      if (role) {
+        users = await storage.getUsersByRole(role);
+      } else {
+        // Return all users for now (in a real app, you'd want pagination)
+        // Get unique user IDs from project members, tasks, etc.
+        const allTasks = await storage.getAllTasks();
+        const userIds = new Set<number>();
+        
+        // Add assignees
+        allTasks.forEach(task => {
+          if (task.assignee_id) userIds.add(task.assignee_id);
+          if (task.creator_id) userIds.add(task.creator_id);
+        });
+        
+        // Add the current user
+        userIds.add(req.user!.id);
+        
+        users = await storage.getUsersByIds(Array.from(userIds));
+      }
+      
+      res.json(users);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch users" });
+    }
+  });
+
+  // Dashboard stats routes
+  app.get("/api/dashboard/stats", isAuthenticated, async (req, res) => {
+    try {
+      const allProjects = await storage.getAllProjects();
+      const allTasks = await storage.getAllTasks();
+      const now = new Date();
+      
+      // Calculate stats
+      const totalProjects = allProjects.length;
+      const tasksInProgress = allTasks.filter(task => task.status === TaskStatus.IN_PROGRESS).length;
+      const completedTasks = allTasks.filter(task => task.status === TaskStatus.COMPLETED).length;
+      
+      // Calculate tasks due soon (within 7 days)
+      const nextWeek = new Date(now);
+      nextWeek.setDate(nextWeek.getDate() + 7);
+      const dueSoonTasks = allTasks.filter(task => {
+        if (!task.deadline) return false;
+        const deadline = new Date(task.deadline);
+        return deadline >= now && deadline <= nextWeek && task.status !== TaskStatus.COMPLETED;
+      }).length;
+      
+      // Calculate completed tasks this week
+      const oneWeekAgo = new Date(now);
+      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+      const completedTasksThisWeek = allTasks.filter(task => {
+        if (!task.completed_at) return false;
+        const completedDate = new Date(task.completed_at);
+        return completedDate >= oneWeekAgo && completedDate <= now;
+      }).length;
+      
+      // Calculate new projects this month
+      const oneMonthAgo = new Date(now);
+      oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+      const newProjectsThisMonth = allProjects.filter(project => {
+        // Note: this assumes project creation date is tracked
+        // In a real app, you would have a created_at field
+        return project.created_at && new Date(project.created_at) >= oneMonthAgo;
+      }).length;
+      
+      // Get team members count
+      const projectMembers = new Set<number>();
+      for (const project of allProjects) {
+        const members = await storage.getProjectMembers(project.id);
+        members.forEach(member => projectMembers.add(member.user_id));
+        projectMembers.add(project.owner_id); // Add project owner
+      }
+      const teamMembers = projectMembers.size;
+      
+      // Mock online users (in a real app, this would come from an active sessions count)
+      const onlineUsers = Math.min(3, teamMembers);
+      
+      res.json({
+        totalProjects,
+        tasksInProgress,
+        completedTasks,
+        teamMembers,
+        newProjectsThisMonth,
+        dueSoonTasks,
+        completedTasksThisWeek,
+        onlineUsers
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch dashboard stats" });
+    }
+  });
+
+  // File upload routes
   app.post("/api/files/upload", isAuthenticated, upload.single("file"), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: "No file uploaded" });
       }
       
-      const { taskId, projectId } = req.body;
+      const { projectId, taskId, description } = req.body;
       
-      // Validate that either taskId or projectId is provided
-      if (!taskId && !projectId) {
-        return res.status(400).json({ message: "Either taskId or projectId must be provided" });
-      }
-      
-      // If taskId is provided, check that the task exists
-      if (taskId) {
-        const task = await storage.getTask(parseInt(taskId));
-        if (!task) {
-          return res.status(404).json({ message: "Task not found" });
-        }
-      }
-      
-      // If projectId is provided, check that the project exists
-      if (projectId) {
-        const project = await storage.getProject(parseInt(projectId));
-        if (!project) {
-          return res.status(404).json({ message: "Project not found" });
-        }
-      }
-      
-      const fileRecord = await storage.createFile({
-        name: req.file.originalname,
-        path: req.file.path,
-        size: req.file.size,
+      const fileData = {
+        name: req.file.originalname, 
+        path: req.file.filename,
         type: req.file.mimetype,
+        size: req.file.size,
+        project_id: projectId ? parseInt(projectId) : null,
+        task_id: taskId ? parseInt(taskId) : null,
         uploaded_by: req.user!.id,
-        task_id: taskId ? parseInt(taskId) : undefined,
-        project_id: projectId ? parseInt(projectId) : undefined
-      });
+        description: description || null
+      };
       
-      // Create activity record
+      const file = await storage.createFile(fileData);
+      
+      // Create activity
       if (taskId) {
         const task = await storage.getTask(parseInt(taskId));
         await storage.createActivity({
           action: "upload_file",
-          description: `uploaded file to task: ${task?.title}`,
+          description: `uploaded file to task: ${task?.title || 'a task'}`,
           user_id: req.user!.id,
           project_id: task?.project_id,
           task_id: parseInt(taskId)
@@ -596,15 +707,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const project = await storage.getProject(parseInt(projectId));
         await storage.createActivity({
           action: "upload_file",
-          description: `uploaded file to project: ${project?.name}`,
+          description: `uploaded file to project: ${project?.name || 'a project'}`,
           user_id: req.user!.id,
           project_id: parseInt(projectId)
         });
       }
       
-      res.status(201).json(fileRecord);
+      res.status(201).json(file);
     } catch (error) {
-      console.error("File upload error:", error);
       if (error instanceof Error) {
         res.status(400).json({ message: error.message });
       } else {
@@ -624,30 +734,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else if (taskId) {
         files = await storage.getTaskFiles(taskId);
       } else {
-        // Return all project files the user has access to
-        const projects = await storage.getUserProjects(req.user!.id);
-        const projectIds = projects.map(project => project.id);
+        // Get all files for the current user's projects
+        const userProjects = await storage.getUserProjects(req.user!.id);
+        const projectIds = userProjects.map(project => project.id);
         
-        // Collect files from all projects
-        const filesArray = await Promise.all(
-          projectIds.map(id => storage.getProjectFiles(id))
-        );
-        
-        // Flatten the array of arrays
-        files = filesArray.flat();
+        // Collect files from all the user's projects
+        files = [];
+        for (const projectId of projectIds) {
+          const projectFiles = await storage.getProjectFiles(projectId);
+          files.push(...projectFiles);
+        }
       }
       
-      // Enhance file objects with user information
-      const userIds = Array.from(new Set(files.map(file => file.uploaded_by)));
-      const users = await storage.getUsersByIds(userIds);
-      
-      const enhancedFiles = files.map(file => {
-        const user = users.find(u => u.id === file.uploaded_by);
+      // Enhance files with project and user info
+      const enhancedFiles = await Promise.all(files.map(async (file) => {
+        const uploader = await storage.getUser(file.uploaded_by);
+        let project = null;
+        let task = null;
+        
+        if (file.project_id) {
+          project = await storage.getProject(file.project_id);
+        }
+        
+        if (file.task_id) {
+          task = await storage.getTask(file.task_id);
+        }
+        
         return {
           ...file,
-          uploader: user ? { id: user.id, name: user.name, username: user.username } : undefined
+          uploader: uploader ? {
+            id: uploader.id,
+            name: uploader.name,
+            username: uploader.username
+          } : null,
+          project: project ? {
+            id: project.id,
+            name: project.name
+          } : null,
+          task: task ? {
+            id: task.id,
+            title: task.title
+          } : null
         };
-      });
+      }));
       
       res.json(enhancedFiles);
     } catch (error) {
@@ -655,18 +784,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/files/:id", isAuthenticated, async (req, res) => {
-    try {
-      const fileId = parseInt(req.params.id);
-      const file = await storage.getFile(fileId);
-      
-      if (!file) {
-        return res.status(404).json({ message: "File not found" });
-      }
-      
-      res.json(file);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch file" });
+  app.get("/uploads/:filename", async (req, res) => {
+    const filePath = path.join(uploadDir, req.params.filename);
+    if (fs.existsSync(filePath)) {
+      res.sendFile(filePath);
+    } else {
+      res.status(404).json({ message: "File not found" });
     }
   });
 
@@ -679,19 +802,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "File not found" });
       }
       
-      // Only uploader or admin can delete files
-      if (file.uploaded_by !== req.user?.id && req.user?.role !== "admin") {
-        return res.status(403).json({ message: "Forbidden: Not file owner" });
+      // Check permissions - only file uploader, project owner, or admin can delete
+      if (file.uploaded_by !== req.user?.id) {
+        // Check if user is project owner
+        let hasPermission = false;
+        
+        if (file.project_id) {
+          const project = await storage.getProject(file.project_id);
+          if (project && project.owner_id === req.user?.id) {
+            hasPermission = true;
+          }
+        }
+        
+        // Check if user is admin
+        if (req.user?.role === "admin") {
+          hasPermission = true;
+        }
+        
+        if (!hasPermission) {
+          return res.status(403).json({ message: "Forbidden: Insufficient permissions to delete this file" });
+        }
       }
       
       // Delete the physical file
       try {
-        await fs.promises.unlink(file.path);
-      } catch (error) {
-        console.error("Error deleting physical file:", error);
+        fs.unlinkSync(path.join(uploadDir, file.path));
+      } catch (err) {
+        console.error("Error deleting file from filesystem:", err);
+        // Continue with deletion from database even if file is not found
       }
       
-      // Delete the file record
       await storage.deleteFile(fileId);
       
       res.status(204).send();
@@ -700,78 +840,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Activity routes
-  app.get("/api/activities", isAuthenticated, async (req, res) => {
-    try {
-      const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
-      const projectId = req.query.projectId ? parseInt(req.query.projectId as string) : null;
-      const userId = req.query.userId ? parseInt(req.query.userId as string) : null;
-      
-      let activities;
-      
-      if (projectId) {
-        activities = await storage.getProjectActivities(projectId);
-      } else if (userId) {
-        activities = await storage.getUserActivities(userId);
-      } else {
-        activities = await storage.getRecentActivities(limit);
-      }
-      
-      // Enhance activities with user information
-      const userIds = Array.from(new Set(activities.map(activity => activity.user_id)));
-      const users = await storage.getUsersByIds(userIds);
-      
-      const enhancedActivities = activities.map(activity => {
-        const user = users.find(u => u.id === activity.user_id);
-        return {
-          ...activity,
-          user: user ? { id: user.id, name: user.name, username: user.username, avatar: user.avatar } : undefined
-        };
-      });
-      
-      res.json(enhancedActivities);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch activities" });
-    }
+  // Chatbot endpoint
+  app.post("/api/chatbot", isAuthenticated, async (req, res) => {
+    handleChatRequest(req, res);
   });
 
-  // API for AI chatbot
-  app.post("/api/chatbot", isAuthenticated, handleChatRequest);
-  
-  // API for anonymous feedback
-  app.post("/api/feedback", isAuthenticated, async (req, res) => {
-    try {
-      // We're storing feedback as an activity in this simplified version
-      const { category, type, content } = req.body;
-      
-      if (!category || !type || !content) {
-        return res.status(400).json({
-          message: "Missing required fields: category, type, and content are required"
-        });
-      }
-      
-      // Create an activity with anonymized user data
-      const feedback = await storage.createActivity({
-        action: "anonymous_feedback",
-        description: `Feedback - ${category}/${type}: ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`,
-        user_id: -1, // Use -1 to indicate anonymous (this will need to be handled in the UI)
-      });
-      
-      res.status(201).json({
-        id: feedback.id,
-        date: feedback.created_at,
-        status: "pending",
-        category,
-        type,
-        preview: content.substring(0, 100) + (content.length > 100 ? '...' : '')
-      });
-    } catch (error) {
-      console.error("Feedback submission error:", error);
-      res.status(500).json({ message: "Failed to submit feedback" });
-    }
-  });
-
-  // Create the HTTP server
   const httpServer = createServer(app);
 
   return httpServer;

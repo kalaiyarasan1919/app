@@ -62,11 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         description: `Welcome back, ${user.name}!`,
       });
       
-      // Force navigation to dashboard with a slight delay
-      setTimeout(() => {
-        window.location.href = "/"; // Use direct location change as a fallback
-      }, 200);
-      
+      // Navigate to the dashboard
       navigate("/");
     },
     onError: (error: Error) => {
@@ -85,17 +81,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     onSuccess: (user: User) => {
       console.log("Registration successful for:", user.username);
+      // Ensure user data is set in the cache
       queryClient.setQueryData(["/api/user"], user);
       toast({
         title: "Registration successful",
         description: `Welcome to TaskCollab, ${user.name}!`,
       });
       
-      // Force navigation to dashboard with a slight delay
-      setTimeout(() => {
-        window.location.href = "/"; // Use direct location change as a fallback
-      }, 200);
-      
+      // Navigate to the dashboard
       navigate("/");
     },
     onError: (error: Error) => {
