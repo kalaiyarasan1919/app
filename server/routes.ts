@@ -1,21 +1,21 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
 import { setupAuth } from "./auth";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { handleChatRequest } from "./chatbot";
-import { 
-  insertProjectSchema, 
-  insertTaskSchema, 
-  insertProjectMemberSchema, 
-  insertCommentSchema,
-  insertActivitySchema,
+import {
+  // projectSchema, // If needed for validation, otherwise remove
+  // commentSchema, // If needed for validation, otherwise remove
+  // activitySchema, // If needed for validation, otherwise remove
+  // feedbackSchema, // If needed for validation, otherwise remove
   TaskStatus,
   ProjectStatus,
   UserRole
 } from "@shared/schema";
+import passport from "passport";
+import { User, Project, Task, Comment, Activity, File, Feedback } from './models/index';
 
 // Configure multer for file uploads
 const uploadDir = path.join(process.cwd(), "uploads");
@@ -66,273 +66,162 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Setup authentication routes
   setupAuth(app);
 
-  // Projects routes
-  app.get("/api/projects", isAuthenticated, async (req, res) => {
+  // Auth routes
+  app.get("/api/auth/google", passport.authenticate("google", { scope: ["profile", "email"] }));
+  app.get("/api/auth/google/callback", passport.authenticate("google", { failureRedirect: "/login" }), async (req, res, next) => {
     try {
-      const projects = await storage.getAllProjects();
-      res.json(projects);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch projects" });
-    }
-  });
-
-  app.get("/api/projects/:id", isAuthenticated, async (req, res) => {
-    try {
-      const projectId = parseInt(req.params.id);
-      const project = await storage.getProject(projectId);
-      
-      if (!project) {
-        return res.status(404).json({ message: "Project not found" });
+      // The user should already be authenticated by passport
+      if (!req.user) {
+        return res.redirect("/login");
       }
-      
-      res.json(project);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch project" });
-    }
-  });
 
-  app.post("/api/projects", isAuthenticated, async (req, res) => {
-    try {
-      // Log the incoming request body for debugging
-      console.log("Project creation request body:", req.body);
+      // req.user should contain the user data from passport
+      const user = req.user as any;
       
-      // Handle date fields properly
-      const data = { ...req.body };
+      // Store MongoDB _id in session
+      (req.session as any).userId = user._id.toString();
       
-      // Convert deadline string to Date object if it exists
-      if (data.deadline && typeof data.deadline === 'string') {
-        try {
-          data.deadline = new Date(data.deadline);
-        } catch (error) {
-          const dateError = error as Error;
-          return res.status(400).json({ 
-            message: `Invalid date format for deadline: ${dateError.message || "Unknown error"}` 
-          });
+      // Save session before redirect
+      req.session.save((err) => {
+        if (err) {
+          console.error("Session save error:", err);
+          return res.redirect("/login");
         }
-      }
-      
-      const validatedData = insertProjectSchema.parse({
-        ...data,
-        owner_id: req.user?.id
+        res.redirect("/");
       });
-
-      const project = await storage.createProject(validatedData);
-      
-      // Create an activity record
-      await storage.createActivity({
-        action: "create_project",
-        description: `created project: ${project.name}`,
-        user_id: req.user!.id,
-        project_id: project.id
-      });
-
-      res.status(201).json(project);
-    } catch (error) {
-      console.error("Project creation error:", error);
-      if (error instanceof Error) {
-        res.status(400).json({ message: error.message });
-      } else {
-        res.status(500).json({ message: "Failed to create project" });
-      }
+    } catch (err) {
+      console.error("Google callback error:", err);
+      res.redirect("/login");
     }
   });
 
-  app.put("/api/projects/:id", isAuthenticated, async (req, res) => {
-    try {
-      const projectId = parseInt(req.params.id);
-      const project = await storage.getProject(projectId);
-      
-      if (!project) {
-        return res.status(404).json({ message: "Project not found" });
-      }
-      
-      // Only owner or admin can update project
-      if (project.owner_id !== req.user?.id && req.user?.role !== "admin") {
-        return res.status(403).json({ message: "Forbidden: Not project owner" });
-      }
-      
-      // Handle date fields properly
-      const data = { ...req.body };
-      
-      // Convert deadline string to Date object if it exists
-      if (data.deadline && typeof data.deadline === 'string') {
-        try {
-          data.deadline = new Date(data.deadline);
-        } catch (error) {
-          const dateError = error as Error;
-          return res.status(400).json({ 
-            message: `Invalid date format for deadline: ${dateError.message || "Unknown error"}` 
-          });
-        }
-      }
-      
-      const updatedProject = await storage.updateProject(projectId, data);
-      
-      await storage.createActivity({
-        action: "update_project",
-        description: `updated project: ${project.name}`,
-        user_id: req.user!.id,
-        project_id: project.id
-      });
-      
-      res.json(updatedProject);
-    } catch (error) {
-      if (error instanceof Error) {
-        res.status(400).json({ message: error.message });
-      } else {
-        res.status(500).json({ message: "Failed to update project" });
-      }
+  // Auth check endpoint
+  app.get("/api/user", async (req, res) => {
+    const userId = (req.session as any).userId;
+    if (!userId) {
+      return res.status(401).json({ message: "Not authenticated" });
     }
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(401).json({ message: "User not found" });
+    }
+    res.json(user);
   });
 
-  app.delete("/api/projects/:id", isAuthenticated, async (req, res) => {
+  app.get("/api/users", async (req, res) => {
     try {
-      const projectId = parseInt(req.params.id);
-      const project = await storage.getProject(projectId);
-      
-      if (!project) {
-        return res.status(404).json({ message: "Project not found" });
-      }
-      
-      // Only owner or admin can delete project
-      if (project.owner_id !== req.user?.id && req.user?.role !== "admin") {
-        return res.status(403).json({ message: "Forbidden: Not project owner" });
-      }
-      
-      await storage.deleteProject(projectId);
-      
-      res.status(204).send();
-    } catch (error) {
-      res.status(500).json({ message: "Failed to delete project" });
-    }
-  });
-
-  // Project members routes
-  app.get("/api/projects/:id/members", isAuthenticated, async (req, res) => {
-    try {
-      const projectId = parseInt(req.params.id);
-      const project = await storage.getProject(projectId);
-      
-      if (!project) {
-        return res.status(404).json({ message: "Project not found" });
-      }
-      
-      const members = await storage.getProjectMembers(projectId);
-      const memberIds = members.map(member => member.user_id);
-      // Also include the project owner
-      memberIds.push(project.owner_id);
-      
-      const uniqueIds = Array.from(new Set(memberIds));
-      const users = await storage.getUsersByIds(uniqueIds);
-      
+      const users = await User.find({});
       res.json(users);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch project members" });
+      res.status(500).json({ message: "Error fetching users" });
     }
   });
 
-  app.post("/api/projects/:id/members", isAuthenticated, hasRole(["admin", "team_leader"]), async (req, res) => {
+  app.post("/api/users", async (req, res) => {
+    const { username, password, name, email, role, avatar } = req.body;
     try {
-      const projectId = parseInt(req.params.id);
-      const project = await storage.getProject(projectId);
-      
-      if (!project) {
-        return res.status(404).json({ message: "Project not found" });
-      }
-      
-      // Only owner or admin can add members
-      if (project.owner_id !== req.user?.id && req.user?.role !== "admin") {
-        return res.status(403).json({ message: "Forbidden: Not project owner" });
-      }
-      
-      const validatedData = insertProjectMemberSchema.parse({
-        project_id: projectId,
-        user_id: req.body.user_id
+      const user = await User.create({
+        username,
+        password,
+        name,
+        email,
+        role,
+        avatar
       });
-      
-      const member = await storage.addProjectMember(validatedData);
-      const addedUser = await storage.getUser(req.body.user_id);
-      
-      await storage.createActivity({
-        action: "add_member",
-        description: `added ${addedUser?.name || 'a user'} to project: ${project.name}`,
-        user_id: req.user!.id,
-        project_id: project.id
-      });
-      
-      res.status(201).json(member);
+      res.status(201).json(user);
     } catch (error) {
-      if (error instanceof Error) {
-        res.status(400).json({ message: error.message });
-      } else {
-        res.status(500).json({ message: "Failed to add project member" });
-      }
+      res.status(500).json({ message: "Error creating user" });
     }
   });
 
-  app.delete("/api/projects/:projectId/members/:userId", isAuthenticated, hasRole(["admin", "team_leader"]), async (req, res) => {
+  // PATCH /api/user - update profile
+  app.patch("/api/user", isAuthenticated, async (req, res) => {
     try {
-      const projectId = parseInt(req.params.projectId);
-      const userId = parseInt(req.params.userId);
-      
-      const project = await storage.getProject(projectId);
-      
-      if (!project) {
-        return res.status(404).json({ message: "Project not found" });
-      }
-      
-      // Only owner or admin can remove members
-      if (project.owner_id !== req.user?.id && req.user?.role !== "admin") {
-        return res.status(403).json({ message: "Forbidden: Not project owner" });
-      }
-      
-      await storage.removeProjectMember(projectId, userId);
-      const removedUser = await storage.getUser(userId);
-      
-      await storage.createActivity({
-        action: "remove_member",
-        description: `removed ${removedUser?.name || 'a user'} from project: ${project.name}`,
-        user_id: req.user!.id,
-        project_id: project.id
-      });
-      
-      res.status(204).send();
+      const userId = (req.session as any).userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const { name, username, email } = req.body;
+      const user = await User.findByIdAndUpdate(userId, { name, username, email }, { new: true });
+      if (!user) return res.status(404).json({ message: "User not found" });
+      res.json(user);
     } catch (error) {
-      res.status(500).json({ message: "Failed to remove project member" });
+      res.status(500).json({ message: "Failed to update user profile" });
+    }
+  });
+
+  // PATCH /api/user/notifications - update notification preferences
+  app.patch("/api/user/notifications", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      // TODO: Add notification preferences field to User model
+      return res.status(501).json({ message: "Not implemented" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update notification preferences" });
+    }
+  });
+
+  // PATCH /api/user/password - change password
+  app.patch("/api/user/password", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const { currentPassword, newPassword } = req.body;
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: "Current and new password are required" });
+      }
+      // TODO: Implement password hashing and verification
+      const user = await User.findByIdAndUpdate(userId, { password: newPassword }, { new: true });
+      if (!user) return res.status(404).json({ message: "User not found" });
+      res.json({ message: "Password updated successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update password" });
     }
   });
 
   // Tasks routes
   app.get("/api/tasks", isAuthenticated, async (req, res) => {
     try {
-      let tasks;
-      const projectId = req.query.projectId ? parseInt(req.query.projectId as string) : null;
-      const userId = req.query.assigneeId ? parseInt(req.query.assigneeId as string) : null;
-      
-      if (projectId) {
-        tasks = await storage.getProjectTasks(projectId);
-      } else if (userId) {
-        tasks = await storage.getUserTasks(userId);
-      } else {
-        // Return user's tasks by default
-        tasks = await storage.getUserTasks(req.user!.id);
-      }
-      
-      res.json(tasks);
+      const userId = (req.session as any).userId;
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 10;
+      const sortBy = (req.query.sortBy as string) || 'createdAt';
+      const sortOrder = req.query.sortOrder === 'asc' ? 1 : -1;
+
+      // Only fetch tasks where user is creator, assignee, or in shared_with
+      const query = {
+        $or: [
+          { creator_id: userId },
+          { assignee_id: userId },
+          { shared_with: userId }
+        ]
+      };
+
+      const total = await Task.countDocuments(query);
+      const tasks = await Task.find(query)
+        .sort({ [sortBy]: sortOrder })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .populate('assignee_id', 'name email')
+        .populate('creator_id', 'name email');
+
+      res.json({
+        tasks,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit)
+      });
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch tasks" });
+      res.status(500).json({ message: "Error fetching tasks" });
     }
   });
 
-  app.get("/api/tasks/:id", isAuthenticated, async (req, res) => {
+  app.get("/api/tasks/:id", async (req, res) => {
     try {
-      const taskId = parseInt(req.params.id);
-      const task = await storage.getTask(taskId);
-      
+      const { id } = req.params;
+      const task = await Task.findById(id).populate('assignee_id', 'name email').populate('creator_id', 'name email');
       if (!task) {
         return res.status(404).json({ message: "Task not found" });
       }
-      
       res.json(task);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch task" });
@@ -340,167 +229,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/tasks", isAuthenticated, async (req, res) => {
+    const { title, description, status, priority, deadline, project_id, assignee_id } = req.body;
+    const creator_id = (req.session as any).userId;
+    
+    // Validate required fields
+    if (!title) {
+      return res.status(400).json({ message: "Title is required" });
+    }
+    
     try {
-      const taskData = { ...req.body };
-      
-      // Convert deadline string to Date object if it exists
-      if (taskData.deadline && typeof taskData.deadline === 'string') {
-        try {
-          taskData.deadline = new Date(taskData.deadline);
-        } catch (error) {
-          return res.status(400).json({ 
-            message: "Invalid date format for deadline" 
-          });
-        }
-      }
-      
-      const validatedData = insertTaskSchema.parse({
-        ...taskData,
-        creator_id: req.user?.id
+      const task = await Task.create({
+        title,
+        description,
+        status,
+        priority,
+        deadline,
+        project_id,
+        assignee_id,
+        creator_id
       });
       
-      const task = await storage.createTask(validatedData);
+      // Populate the creator and assignee information
+      const populatedTask = await Task.findById(task._id)
+        .populate('creator_id', 'name email')
+        .populate('assignee_id', 'name email');
       
-      await storage.createActivity({
-        action: "create_task",
-        description: `created task: ${task.title}`,
-        user_id: req.user!.id,
-        project_id: task.project_id,
-        task_id: task.id
-      });
-      
-      res.status(201).json(task);
+      res.status(201).json(populatedTask);
     } catch (error) {
+      console.error("Task creation error:", error);
       if (error instanceof Error) {
         res.status(400).json({ message: error.message });
       } else {
-        res.status(500).json({ message: "Failed to create task" });
+        res.status(500).json({ message: "Error creating task" });
       }
     }
   });
 
   app.patch("/api/tasks/:id", isAuthenticated, async (req, res) => {
+    const { id } = req.params;
+    const updateData = req.body;
     try {
-      const taskId = parseInt(req.params.id);
-      const task = await storage.getTask(taskId);
-      
-      if (!task) {
-        return res.status(404).json({ message: "Task not found" });
+      // Only allow updating shared_with, status, priority, deadline, title, description, assignee_id, project_id
+      const allowedFields = [
+        "shared_with", "status", "priority", "deadline", "title", "description", "assignee_id", "project_id"
+      ];
+      const update: any = {};
+      for (const key of allowedFields) {
+        if (updateData[key] !== undefined) update[key] = updateData[key];
       }
-      
-      const updatedData = { ...req.body };
-      
-      // Convert deadline string to Date object if it exists
-      if (updatedData.deadline && typeof updatedData.deadline === 'string') {
-        try {
-          updatedData.deadline = new Date(updatedData.deadline);
-        } catch (error) {
-          return res.status(400).json({ 
-            message: "Invalid date format for deadline" 
-          });
-        }
-      }
-      
-      // If marking as completed
-      if (updatedData.status === TaskStatus.COMPLETED && task.status !== TaskStatus.COMPLETED) {
-        updatedData.completed_at = new Date();
-      }
-      
-      const updatedTask = await storage.updateTask(taskId, updatedData);
-      
-      await storage.createActivity({
-        action: "update_task",
-        description: `updated task: ${task.title}`,
-        user_id: req.user!.id,
-        project_id: task.project_id,
-        task_id: task.id
-      });
-      
-      res.json(updatedTask);
+      const task = await Task.findByIdAndUpdate(id, update, { new: true });
+      if (!task) return res.status(404).json({ message: "Task not found" });
+      res.json(task);
     } catch (error) {
-      if (error instanceof Error) {
-        res.status(400).json({ message: error.message });
-      } else {
-        res.status(500).json({ message: "Failed to update task" });
-      }
+      res.status(500).json({ message: "Error updating task" });
     }
   });
 
-  app.put("/api/tasks/:id", isAuthenticated, async (req, res) => {
+  app.delete("/api/tasks/:id", async (req, res) => {
+    const { id } = req.params;
     try {
-      const taskId = parseInt(req.params.id);
-      const task = await storage.getTask(taskId);
-      
-      if (!task) {
-        return res.status(404).json({ message: "Task not found" });
-      }
-      
-      const updatedData = { ...req.body };
-      
-      // Convert deadline string to Date object if it exists
-      if (updatedData.deadline && typeof updatedData.deadline === 'string') {
-        try {
-          updatedData.deadline = new Date(updatedData.deadline);
-        } catch (error) {
-          return res.status(400).json({ 
-            message: "Invalid date format for deadline" 
-          });
-        }
-      }
-      
-      // If marking as completed
-      if (updatedData.status === TaskStatus.COMPLETED && task.status !== TaskStatus.COMPLETED) {
-        updatedData.completed_at = new Date();
-      }
-      
-      const updatedTask = await storage.updateTask(taskId, updatedData);
-      
-      await storage.createActivity({
-        action: "update_task",
-        description: `updated task: ${task.title}`,
-        user_id: req.user!.id,
-        project_id: task.project_id,
-        task_id: task.id
-      });
-      
-      res.json(updatedTask);
+      const task = await Task.findByIdAndDelete(id);
+      if (!task) return res.status(404).json({ message: "Task not found" });
+      res.json({ message: "Task deleted" });
     } catch (error) {
-      if (error instanceof Error) {
-        res.status(400).json({ message: error.message });
-      } else {
-        res.status(500).json({ message: "Failed to update task" });
-      }
-    }
-  });
-
-  app.delete("/api/tasks/:id", isAuthenticated, async (req, res) => {
-    try {
-      const taskId = parseInt(req.params.id);
-      const task = await storage.getTask(taskId);
-      
-      if (!task) {
-        return res.status(404).json({ message: "Task not found" });
-      }
-      
-      // Only creator, project owner, or admin can delete tasks
-      const project = await storage.getProject(task.project_id);
-      if (task.creator_id !== req.user?.id && project?.owner_id !== req.user?.id && req.user?.role !== "admin") {
-        return res.status(403).json({ message: "Forbidden: Insufficient permissions to delete this task" });
-      }
-      
-      await storage.deleteTask(taskId);
-      
-      res.status(204).send();
-    } catch (error) {
-      res.status(500).json({ message: "Failed to delete task" });
+      res.status(500).json({ message: "Error deleting task" });
     }
   });
 
   // Comments routes
   app.get("/api/tasks/:id/comments", isAuthenticated, async (req, res) => {
     try {
-      const taskId = parseInt(req.params.id);
-      const comments = await storage.getTaskComments(taskId);
+      const { id } = req.params;
+      const comments = await Comment.find({ task_id: id }).populate('user_id', 'name email');
       res.json(comments);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch comments" });
@@ -509,30 +309,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/tasks/:id/comments", isAuthenticated, async (req, res) => {
     try {
-      const taskId = parseInt(req.params.id);
-      const task = await storage.getTask(taskId);
+      const { id } = req.params;
+      const { content } = req.body;
+      const userId = (req.session as any).userId;
       
-      if (!task) {
-        return res.status(404).json({ message: "Task not found" });
-      }
-      
-      const validatedData = insertCommentSchema.parse({
-        task_id: taskId,
-        user_id: req.user!.id,
-        content: req.body.content
+      const comment = await Comment.create({
+        content,
+        task_id: id,
+        user_id: userId
       });
       
-      const comment = await storage.createComment(validatedData);
-      
-      await storage.createActivity({
-        action: "comment_task",
-        description: `commented on task: ${task.title}`,
-        user_id: req.user!.id,
-        project_id: task.project_id,
-        task_id: task.id
-      });
-      
-      res.status(201).json(comment);
+      const populatedComment = await Comment.findById(comment._id).populate('user_id', 'name email');
+      res.status(201).json(populatedComment);
     } catch (error) {
       if (error instanceof Error) {
         res.status(400).json({ message: error.message });
@@ -548,61 +336,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.file) {
         return res.status(400).json({ message: "No file uploaded" });
       }
-      
       const { taskId, projectId } = req.body;
-      
-      // Validate that either taskId or projectId is provided
       if (!taskId && !projectId) {
         return res.status(400).json({ message: "Either taskId or projectId must be provided" });
       }
       
-      // If taskId is provided, check that the task exists
-      if (taskId) {
-        const task = await storage.getTask(parseInt(taskId));
-        if (!task) {
-          return res.status(404).json({ message: "Task not found" });
-        }
-      }
-      
-      // If projectId is provided, check that the project exists
-      if (projectId) {
-        const project = await storage.getProject(parseInt(projectId));
-        if (!project) {
-          return res.status(404).json({ message: "Project not found" });
-        }
-      }
-      
-      const fileRecord = await storage.createFile({
-        name: req.file.originalname,
-        path: req.file.path,
+      const userId = (req.session as any).userId;
+      const file = await File.create({
+        filename: req.file.filename,
+        filepath: req.file.path,
         size: req.file.size,
-        type: req.file.mimetype,
-        uploaded_by: req.user!.id,
-        task_id: taskId ? parseInt(taskId) : undefined,
-        project_id: projectId ? parseInt(projectId) : undefined
+        mimetype: req.file.mimetype,
+        project_id: projectId,
+        task_id: taskId,
+        uploader_id: userId
       });
       
-      // Create activity record
-      if (taskId) {
-        const task = await storage.getTask(parseInt(taskId));
-        await storage.createActivity({
-          action: "upload_file",
-          description: `uploaded file to task: ${task?.title}`,
-          user_id: req.user!.id,
-          project_id: task?.project_id,
-          task_id: parseInt(taskId)
-        });
-      } else if (projectId) {
-        const project = await storage.getProject(parseInt(projectId));
-        await storage.createActivity({
-          action: "upload_file",
-          description: `uploaded file to project: ${project?.name}`,
-          user_id: req.user!.id,
-          project_id: parseInt(projectId)
-        });
-      }
-      
-      res.status(201).json(fileRecord);
+      res.status(201).json(file);
     } catch (error) {
       console.error("File upload error:", error);
       if (error instanceof Error) {
@@ -615,41 +365,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/files", isAuthenticated, async (req, res) => {
     try {
-      let files;
-      const projectId = req.query.projectId ? parseInt(req.query.projectId as string) : null;
-      const taskId = req.query.taskId ? parseInt(req.query.taskId as string) : null;
-      
-      if (projectId) {
-        files = await storage.getProjectFiles(projectId);
-      } else if (taskId) {
-        files = await storage.getTaskFiles(taskId);
-      } else {
-        // Return all project files the user has access to
-        const projects = await storage.getUserProjects(req.user!.id);
-        const projectIds = projects.map(project => project.id);
-        
-        // Collect files from all projects
-        const filesArray = await Promise.all(
-          projectIds.map(id => storage.getProjectFiles(id))
-        );
-        
-        // Flatten the array of arrays
-        files = filesArray.flat();
-      }
-      
-      // Enhance file objects with user information
-      const userIds = Array.from(new Set(files.map(file => file.uploaded_by)));
-      const users = await storage.getUsersByIds(userIds);
-      
-      const enhancedFiles = files.map(file => {
-        const user = users.find(u => u.id === file.uploaded_by);
-        return {
-          ...file,
-          uploader: user ? { id: user.id, name: user.name, username: user.username } : undefined
-        };
-      });
-      
-      res.json(enhancedFiles);
+      const files = await File.find({}).populate('uploader_id', 'name email');
+      res.json(files);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch files" });
     }
@@ -657,13 +374,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/files/:id", isAuthenticated, async (req, res) => {
     try {
-      const fileId = parseInt(req.params.id);
-      const file = await storage.getFile(fileId);
-      
+      const { id } = req.params;
+      const file = await File.findById(id).populate('uploader_id', 'name email');
       if (!file) {
         return res.status(404).json({ message: "File not found" });
       }
-      
       res.json(file);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch file" });
@@ -672,29 +387,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/files/:id", isAuthenticated, async (req, res) => {
     try {
-      const fileId = parseInt(req.params.id);
-      const file = await storage.getFile(fileId);
-      
-      if (!file) {
-        return res.status(404).json({ message: "File not found" });
-      }
-      
-      // Only uploader or admin can delete files
-      if (file.uploaded_by !== req.user?.id && req.user?.role !== "admin") {
-        return res.status(403).json({ message: "Forbidden: Not file owner" });
-      }
-      
-      // Delete the physical file
-      try {
-        await fs.promises.unlink(file.path);
-      } catch (error) {
-        console.error("Error deleting physical file:", error);
-      }
-      
-      // Delete the file record
-      await storage.deleteFile(fileId);
-      
-      res.status(204).send();
+      const { id } = req.params;
+      const file = await File.findByIdAndDelete(id);
+      if (!file) return res.status(404).json({ message: "File not found" });
+      res.json({ message: "File deleted" });
     } catch (error) {
       res.status(500).json({ message: "Failed to delete file" });
     }
@@ -703,35 +399,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Activity routes
   app.get("/api/activities", isAuthenticated, async (req, res) => {
     try {
-      const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
-      const projectId = req.query.projectId ? parseInt(req.query.projectId as string) : null;
-      const userId = req.query.userId ? parseInt(req.query.userId as string) : null;
-      
-      let activities;
-      
-      if (projectId) {
-        activities = await storage.getProjectActivities(projectId);
-      } else if (userId) {
-        activities = await storage.getUserActivities(userId);
-      } else {
-        activities = await storage.getRecentActivities(limit);
-      }
-      
-      // Enhance activities with user information
-      const userIds = Array.from(new Set(activities.map(activity => activity.user_id)));
-      const users = await storage.getUsersByIds(userIds);
-      
-      const enhancedActivities = activities.map(activity => {
-        const user = users.find(u => u.id === activity.user_id);
-        return {
-          ...activity,
-          user: user ? { id: user.id, name: user.name, username: user.username, avatar: user.avatar } : undefined
-        };
-      });
-      
-      res.json(enhancedActivities);
+      const activities = await Activity.find({}).populate('user_id', 'name email');
+      res.json(activities);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch activities" });
+    }
+  });
+
+  app.delete("/api/activities/:id", isAuthenticated, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const activity = await Activity.findByIdAndDelete(id);
+      if (!activity) return res.status(404).json({ message: "Activity not found" });
+      res.json({ message: "Activity deleted" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete activity" });
+    }
+  });
+
+  // Health check endpoint for deployment platforms
+  app.get("/api/health", (req, res) => {
+    res.json({ 
+      status: "healthy", 
+      timestamp: new Date().toISOString(),
+      version: "1.0.0"
+    });
+  });
+
+  // Database test endpoint
+  app.get("/api/test-db", async (req, res) => {
+    try {
+      console.log("Testing database connection...");
+      const userCount = await User.countDocuments();
+      const users = await User.find({}).limit(5);
+      res.json({
+        success: true,
+        userCount,
+        users
+      });
+    } catch (error: any) {
+      console.error("Database test failed:", error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
     }
   });
 
@@ -741,33 +452,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // API for anonymous feedback
   app.post("/api/feedback", isAuthenticated, async (req, res) => {
     try {
-      // We're storing feedback as an activity in this simplified version
-      const { category, type, content } = req.body;
+      const { category, type, rating, message, anonymous } = req.body;
+      const userId = anonymous ? undefined : (req.session as any).userId;
       
-      if (!category || !type || !content) {
-        return res.status(400).json({
-          message: "Missing required fields: category, type, and content are required"
-        });
-      }
-      
-      // Create an activity with anonymized user data
-      const feedback = await storage.createActivity({
-        action: "anonymous_feedback",
-        description: `Feedback - ${category}/${type}: ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`,
-        user_id: -1, // Use -1 to indicate anonymous (this will need to be handled in the UI)
-      });
-      
-      res.status(201).json({
-        id: feedback.id,
-        date: feedback.created_at,
-        status: "pending",
+      const feedback = await Feedback.create({
         category,
         type,
-        preview: content.substring(0, 100) + (content.length > 100 ? '...' : '')
+        rating,
+        message,
+        anonymous,
+        user_id: userId
       });
+      
+      res.status(201).json(feedback);
     } catch (error) {
       console.error("Feedback submission error:", error);
-      res.status(500).json({ message: "Failed to submit feedback" });
+      if (error instanceof Error) {
+        res.status(400).json({ message: error.message });
+      } else {
+        res.status(500).json({ message: "Failed to submit feedback" });
+      }
+    }
+  });
+
+
+
+  app.get("/api/feedback", isAuthenticated, async (req, res) => {
+    try {
+      const feedback = await Feedback.find({}).populate('user_id', 'name email');
+      res.json(feedback);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch feedback" });
     }
   });
 

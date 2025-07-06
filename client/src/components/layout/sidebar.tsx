@@ -4,29 +4,13 @@ import { useAuth } from "@/hooks/use-auth";
 import { useSidebar } from "@/hooks/use-sidebar";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { X, CalendarDays, FolderClosed, CheckSquare, Users, MessageSquare, FileBox, Settings, LogOut, LayoutDashboard, Bot, MessageCircle } from "lucide-react";
+import { X, CalendarDays, CheckSquare, MessageSquare, FileBox, Settings, LogOut, LayoutDashboard, Bot, MessageCircle } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { useQuery } from "@tanstack/react-query";
-import { Project } from "@shared/schema";
 
 export function Sidebar() {
   const [location] = useLocation();
   const { user, logoutMutation } = useAuth();
   const { isOpen, setIsOpen, isMobile } = useSidebar();
-  
-  // Fetch recent projects
-  const { data: projects = [] } = useQuery<Project[]>({
-    queryKey: ["/api/projects"],
-    queryFn: async () => {
-      const res = await fetch("/api/projects", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch projects");
-      return res.json();
-    },
-    enabled: !!user,
-  });
-  
-  // Get recent projects (limit to 3)
-  const recentProjects = projects.slice(0, 3);
   
   // Get user initials for avatar
   const getUserInitials = () => {
@@ -45,9 +29,8 @@ export function Sidebar() {
 
   const navItems = [
     { href: "/", label: "Dashboard", icon: <LayoutDashboard className="mr-3 h-5 w-5" /> },
-    { href: "/projects", label: "Projects", icon: <FolderClosed className="mr-3 h-5 w-5" /> },
     { href: "/tasks", label: "My Tasks", icon: <CheckSquare className="mr-3 h-5 w-5" /> },
-    { href: "/team", label: "Team", icon: <Users className="mr-3 h-5 w-5" /> },
+
     { href: "/messages", label: "Messages", icon: <MessageSquare className="mr-3 h-5 w-5" /> },
     { href: "/files", label: "Files", icon: <FileBox className="mr-3 h-5 w-5" /> },
     { href: "/calendar", label: "Calendar", icon: <CalendarDays className="mr-3 h-5 w-5" /> },
@@ -74,7 +57,7 @@ export function Sidebar() {
             <Link href="/">
               <h1 className="text-xl font-bold text-indigo-600 flex items-center cursor-pointer">
                 <CheckSquare className="mr-2 h-6 w-6" />
-                <span>TaskCollab</span>
+                <span>My To Do</span>
               </h1>
             </Link>
             {isMobile && (
@@ -96,7 +79,12 @@ export function Sidebar() {
               <AvatarFallback>{getUserInitials()}</AvatarFallback>
             </Avatar>
             <div>
-              <div className="font-medium text-gray-700">{user.name}</div>
+              <div className="font-medium text-gray-700">
+                {user.name}
+                {user.googleId && (
+                  <span className="text-xs text-gray-400 ml-1">({user.googleId})</span>
+                )}
+              </div>
               <div className="text-sm text-gray-500">{user.role}</div>
             </div>
           </div>
@@ -120,34 +108,6 @@ export function Sidebar() {
               </li>
             ))}
           </ul>
-          
-          {recentProjects.length > 0 && (
-            <div className="mt-8">
-              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                Recent Projects
-              </div>
-              <ul className="space-y-1">
-                {recentProjects.map((project) => (
-                  <li key={project.id}>
-                    <Link href={`/projects/${project.id}`}>
-                      <div className="flex items-center rounded-md py-2 px-3 hover:bg-gray-100 text-gray-600 cursor-pointer">
-                        <span 
-                          className={cn(
-                            "w-2 h-2 rounded-full mr-3",
-                            project.status === "on_track" ? "bg-green-500" : 
-                            project.status === "at_risk" ? "bg-red-500" : 
-                            project.status === "in_progress" ? "bg-orange-500" : 
-                            "bg-gray-500"
-                          )}
-                        />
-                        <span className="truncate">{project.name}</span>
-                      </div>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </nav>
         
         <div className="p-4 border-t border-gray-200">

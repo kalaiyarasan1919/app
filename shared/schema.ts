@@ -1,11 +1,8 @@
-import { pgTable, text, serial, integer, boolean, timestamp } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // User roles
 export enum UserRole {
   ADMIN = "admin",
-  TEAM_LEADER = "team_leader",
   TEAM_MEMBER = "team_member",
   CLIENT = "client"
 }
@@ -34,159 +31,92 @@ export enum ProjectStatus {
   COMPLETED = "completed"
 }
 
-// Users table
-export const users = pgTable("users", {
-  id: serial("id").primaryKey(),
-  username: text("username").notNull().unique(),
-  password: text("password").notNull(),
-  name: text("name").notNull(),
-  email: text("email").notNull().unique(),
-  role: text("role").$type<UserRole>().notNull().default(UserRole.TEAM_MEMBER),
-  avatar: text("avatar"),
+// MongoDB-compatible Zod schemas
+export const userSchema = z.object({
+  username: z.string(),
+  password: z.string(),
+  name: z.string(),
+  email: z.string().email(),
+  role: z.nativeEnum(UserRole).default(UserRole.TEAM_MEMBER),
+  avatar: z.string().optional(),
+  googleId: z.string().optional(),
 });
 
-// Projects table
-export const projects = pgTable("projects", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  description: text("description"),
-  status: text("status").$type<ProjectStatus>().notNull().default(ProjectStatus.PLANNING),
-  deadline: timestamp("deadline"),
-  owner_id: integer("owner_id").notNull().references(() => users.id),
+export const projectSchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  status: z.nativeEnum(ProjectStatus).default(ProjectStatus.PLANNING),
+  deadline: z.date().optional(),
+  owner_id: z.string(), // MongoDB ObjectId as string
+  members: z.array(z.string()).optional(), // Array of MongoDB ObjectIds
 });
 
-// Tasks table
-export const tasks = pgTable("tasks", {
-  id: serial("id").primaryKey(),
-  title: text("title").notNull(),
-  description: text("description"),
-  status: text("status").$type<TaskStatus>().notNull().default(TaskStatus.TODO),
-  priority: text("priority").$type<TaskPriority>().notNull().default(TaskPriority.MEDIUM),
-  deadline: timestamp("deadline"),
-  project_id: integer("project_id").notNull().references(() => projects.id),
-  assignee_id: integer("assignee_id").references(() => users.id),
-  creator_id: integer("creator_id").notNull().references(() => users.id),
-  completed_at: timestamp("completed_at"),
+export const taskSchema = z.object({
+  title: z.string(),
+  description: z.string().optional(),
+  status: z.nativeEnum(TaskStatus).default(TaskStatus.TODO),
+  priority: z.nativeEnum(TaskPriority).default(TaskPriority.MEDIUM),
+  deadline: z.date().optional(),
+  project_id: z.string().optional(), // MongoDB ObjectId as string
+  assignee_id: z.string().optional(), // MongoDB ObjectId as string
+  creator_id: z.string(), // MongoDB ObjectId as string
+  shared_with: z.array(z.string()).optional(), // Array of MongoDB ObjectIds
+  completed_at: z.date().optional(),
 });
 
-// Project members table (many-to-many relationship between users and projects)
-export const project_members = pgTable("project_members", {
-  id: serial("id").primaryKey(),
-  project_id: integer("project_id").notNull().references(() => projects.id),
-  user_id: integer("user_id").notNull().references(() => users.id),
+export const commentSchema = z.object({
+  content: z.string(),
+  task_id: z.string().optional(), // MongoDB ObjectId as string
+  project_id: z.string().optional(), // MongoDB ObjectId as string
+  user_id: z.string(), // MongoDB ObjectId as string
+  created_at: z.date().default(() => new Date()),
 });
 
-// Comments table
-export const comments = pgTable("comments", {
-  id: serial("id").primaryKey(),
-  content: text("content").notNull(),
-  task_id: integer("task_id").references(() => tasks.id),
-  project_id: integer("project_id").references(() => projects.id),
-  user_id: integer("user_id").notNull().references(() => users.id),
-  created_at: timestamp("created_at").notNull().defaultNow(),
+export const activitySchema = z.object({
+  action: z.string(),
+  description: z.string(),
+  user_id: z.string(), // MongoDB ObjectId as string
+  project_id: z.string().optional(), // MongoDB ObjectId as string
+  task_id: z.string().optional(), // MongoDB ObjectId as string
+  created_at: z.date().default(() => new Date()),
 });
 
-// Activity log table
-export const activities = pgTable("activities", {
-  id: serial("id").primaryKey(),
-  action: text("action").notNull(),
-  description: text("description").notNull(),
-  user_id: integer("user_id").notNull().references(() => users.id),
-  project_id: integer("project_id").references(() => projects.id),
-  task_id: integer("task_id").references(() => tasks.id),
-  created_at: timestamp("created_at").notNull().defaultNow(),
+export const fileSchema = z.object({
+  filename: z.string(),
+  filepath: z.string(),
+  size: z.number(),
+  mimetype: z.string(),
+  project_id: z.string().optional(), // MongoDB ObjectId as string
+  task_id: z.string().optional(), // MongoDB ObjectId as string
+  uploader_id: z.string(), // MongoDB ObjectId as string
+  uploaded_at: z.date().default(() => new Date()),
 });
 
-// Files table
-export const files = pgTable("files", {
-  id: serial("id").primaryKey(),
-  filename: text("filename").notNull(),
-  filepath: text("filepath").notNull(),
-  size: integer("size").notNull(),
-  mimetype: text("mimetype").notNull(),
-  project_id: integer("project_id").references(() => projects.id),
-  task_id: integer("task_id").references(() => tasks.id),
-  uploader_id: integer("uploader_id").notNull().references(() => users.id),
-  uploaded_at: timestamp("uploaded_at").notNull().defaultNow(),
+export const feedbackSchema = z.object({
+  category: z.string(),
+  type: z.string(),
+  rating: z.number(),
+  message: z.string(),
+  anonymous: z.boolean().default(true),
+  user_id: z.string().optional(), // MongoDB ObjectId as string
+  created_at: z.date().default(() => new Date()),
+  status: z.string().default("pending"),
 });
 
-// Create Zod schemas for insertions
-export const insertUserSchema = createInsertSchema(users).pick({
-  username: true,
-  password: true,
-  name: true,
-  email: true,
-  role: true,
-  avatar: true,
-});
+// Type definitions for MongoDB documents
+export type User = z.infer<typeof userSchema> & { _id?: string };
+export type Project = z.infer<typeof projectSchema> & { _id?: string };
+export type Task = z.infer<typeof taskSchema> & { _id?: string };
+export type Comment = z.infer<typeof commentSchema> & { _id?: string };
+export type Activity = z.infer<typeof activitySchema> & { _id?: string };
+export type File = z.infer<typeof fileSchema> & { _id?: string };
+export type Feedback = z.infer<typeof feedbackSchema> & { _id?: string };
 
-export const insertProjectSchema = createInsertSchema(projects).pick({
-  name: true,
-  description: true,
-  status: true,
-  deadline: true,
-  owner_id: true,
-});
-
-export const insertTaskSchema = createInsertSchema(tasks).pick({
-  title: true,
-  description: true,
-  status: true,
-  priority: true,
-  deadline: true,
-  project_id: true,
-  assignee_id: true,
-  creator_id: true,
-});
-
-export const insertProjectMemberSchema = createInsertSchema(project_members).pick({
-  project_id: true,
-  user_id: true,
-});
-
-export const insertCommentSchema = createInsertSchema(comments).pick({
-  content: true,
-  task_id: true, 
-  project_id: true,
-  user_id: true,
-});
-
-export const insertActivitySchema = createInsertSchema(activities).pick({
-  action: true,
-  description: true,
-  user_id: true,
-  project_id: true,
-  task_id: true,
-});
-
-export const insertFileSchema = createInsertSchema(files).pick({
-  filename: true,
-  filepath: true,
-  size: true,
-  mimetype: true,
-  project_id: true,
-  task_id: true,
-  uploader_id: true,
-});
-
-// Type definitions for CRUD operations
-export type InsertUser = z.infer<typeof insertUserSchema>;
-export type User = typeof users.$inferSelect;
-
-export type InsertProject = z.infer<typeof insertProjectSchema>;
-export type Project = typeof projects.$inferSelect;
-
-export type InsertTask = z.infer<typeof insertTaskSchema>;
-export type Task = typeof tasks.$inferSelect;
-
-export type InsertProjectMember = z.infer<typeof insertProjectMemberSchema>;
-export type ProjectMember = typeof project_members.$inferSelect;
-
-export type InsertComment = z.infer<typeof insertCommentSchema>;
-export type Comment = typeof comments.$inferSelect;
-
-export type InsertActivity = z.infer<typeof insertActivitySchema>;
-export type Activity = typeof activities.$inferSelect;
-
-export type InsertFile = z.infer<typeof insertFileSchema>;
-export type File = typeof files.$inferSelect;
+// Insert types (without _id)
+export type InsertUser = z.infer<typeof userSchema>;
+export type InsertProject = z.infer<typeof projectSchema>;
+export type InsertTask = z.infer<typeof taskSchema>;
+export type InsertComment = z.infer<typeof commentSchema>;
+export type InsertActivity = z.infer<typeof activitySchema>;
+export type InsertFile = z.infer<typeof fileSchema>;
+export type InsertFeedback = z.infer<typeof feedbackSchema>; 

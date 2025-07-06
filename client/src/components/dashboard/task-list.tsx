@@ -5,7 +5,7 @@ import { TaskCard } from "@/components/ui/task-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, ChevronLeft, ChevronRight, ArrowUp, ArrowDown } from "lucide-react";
 import { Task, TaskStatus } from "@shared/schema";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
@@ -23,7 +23,7 @@ interface TaskListProps {
 export function TaskList({
   userId,
   projectId,
-  limit,
+  limit = 10,
   showFilter = true,
   showAddButton = true,
   onAddTask,
@@ -32,26 +32,24 @@ export function TaskList({
   const { toast } = useToast();
   const [filter, setFilter] = useState<string>("all");
   const [taskToDelete, setTaskToDelete] = useState<number | null>(null);
+  const [page, setPage] = useState(1);
+  const [sortBy, setSortBy] = useState("createdAt");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
 
-  // Fetch tasks
-  const { data: tasks = [], isLoading } = useQuery<Task[]>({
-    queryKey: ["/api/tasks", { projectId, userId }],
+  // Fetch tasks with pagination and sorting
+  const { data, isLoading } = useQuery<{ tasks: Task[]; total: number; page: number; totalPages: number }>({
+    queryKey: ["/api/tasks", { projectId, userId, page, limit, sortBy, sortOrder }],
     queryFn: async () => {
-      let url = "/api/tasks";
-      const params = new URLSearchParams();
-      
-      if (projectId) params.append("projectId", projectId.toString());
-      if (userId) params.append("assigneeId", userId.toString());
-      
-      if (params.toString()) {
-        url += `?${params.toString()}`;
-      }
-      
+      let url = `/api/tasks?page=${page}&limit=${limit}&sortBy=${sortBy}&sortOrder=${sortOrder}`;
+      if (projectId) url += `&projectId=${projectId}`;
+      if (userId) url += `&assigneeId=${userId}`;
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch tasks");
       return res.json();
     },
   });
+  const tasks: Task[] = data?.tasks || [];
+  const totalPages: number = data?.totalPages || 1;
 
   // Delete task mutation
   const deleteTaskMutation = useMutation({
@@ -63,7 +61,15 @@ export function TaskList({
         title: "Task deleted",
         description: "The task has been deleted successfully",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      queryClient.invalidateQueries({
+        predicate: (query) => query.queryKey[0] === "/api/tasks"
+      });
+      queryClient.refetchQueries({
+        predicate: (query) => query.queryKey[0] === "/api/tasks"
+      });
+      queryClient.invalidateQueries({
+        predicate: (query) => query.queryKey[0] === "/api/activities"
+      });
     },
     onError: () => {
       toast({
@@ -75,15 +81,24 @@ export function TaskList({
   });
 
   // Filter tasks based on selected filter
-  const filteredTasks = tasks
-    .filter((task) => {
-      if (filter === "all") return true;
-      if (filter === "completed") return task.status === TaskStatus.COMPLETED;
-      if (filter === "in_progress") return task.status === TaskStatus.IN_PROGRESS;
-      if (filter === "todo") return task.status === TaskStatus.TODO;
-      return true;
-    })
-    .slice(0, limit);
+  const filteredTasks = tasks.filter((task) => {
+    if (filter === "all") {
+      return task.status !== TaskStatus.COMPLETED;
+    }
+    if (filter === "completed") {
+      return task.status === TaskStatus.COMPLETED;
+    }
+    if (filter === "in_progress") {
+      return task.status === TaskStatus.IN_PROGRESS;
+    }
+    if (filter === "todo") {
+      return task.status === TaskStatus.TODO;
+    }
+    if (filter === "review") {
+      return task.status === TaskStatus.REVIEW;
+    }
+    return true;
+  });
 
   const handleDeleteTask = (taskId: number) => {
     setTaskToDelete(taskId);
@@ -102,6 +117,23 @@ export function TaskList({
         <CardHeader className="flex flex-row items-center justify-between p-4 border-b border-gray-200">
           <CardTitle className="text-lg font-bold text-gray-700">My Tasks</CardTitle>
           <div className="flex items-center space-x-2">
+            {/* Sorting controls */}
+            <Select value={sortBy} onValueChange={setSortBy}>
+              <SelectTrigger className="text-sm py-1 px-2 h-8 w-[130px] border-gray-200">
+                <SelectValue placeholder="Sort By" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="createdAt">Created</SelectItem>
+                <SelectItem value="title">Title</SelectItem>
+                <SelectItem value="deadline">Deadline</SelectItem>
+                <SelectItem value="priority">Priority</SelectItem>
+                <SelectItem value="status">Status</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button size="icon" variant="ghost" onClick={() => setSortOrder(sortOrder === "asc" ? "desc" : "asc")}
+              className="h-8 w-8 text-gray-500 hover:text-gray-700">
+              {sortOrder === "asc" ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
+            </Button>
             {showFilter && (
               <Select value={filter} onValueChange={setFilter}>
                 <SelectTrigger className="text-sm py-1 px-2 h-8 w-[130px] border-gray-200">
@@ -140,7 +172,7 @@ export function TaskList({
             <div className="divide-y divide-gray-200 max-h-[500px] overflow-y-auto">
               {filteredTasks.map((task) => (
                 <TaskCard
-                  key={task.id}
+                  key={task._id}
                   task={task}
                   onEdit={onEditTask}
                   onDelete={handleDeleteTask}
@@ -148,17 +180,26 @@ export function TaskList({
               ))}
             </div>
           )}
-          
-          {limit && tasks.length > limit && (
-            <div className="p-4 border-t border-gray-200 bg-gray-50">
-              <Button
-                variant="link"
-                className="w-full py-2 text-center text-indigo-600 hover:text-indigo-800 font-medium"
-              >
-                View All Tasks
-              </Button>
-            </div>
-          )}
+          {/* Pagination controls */}
+          <div className="flex justify-between items-center p-4 border-t border-gray-200 bg-gray-50">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <span className="text-sm">Page {page} of {totalPages}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
         </CardContent>
       </Card>
 

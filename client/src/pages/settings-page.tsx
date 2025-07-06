@@ -11,12 +11,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { UserRole } from "@shared/schema";
 import { useState } from "react";
 import { Camera, Save } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 
 export default function SettingsPage() {
   const { user } = useAuth();
+  const { toast } = useToast();
 
   // User profile form state
   const [name, setName] = useState(user?.name || "");
+  const [username, setUsername] = useState(user?.username || "");
   const [email, setEmail] = useState(user?.email || "");
   const [role, setRole] = useState(user?.role || UserRole.TEAM_MEMBER);
   
@@ -27,12 +31,79 @@ export default function SettingsPage() {
   const [deadlineReminders, setDeadlineReminders] = useState(true);
   const [teamMessages, setTeamMessages] = useState(true);
 
+  // Password change state
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
   // Get user initials for avatar
   const getUserInitials = () => {
     if (!user?.name) return "?";
     const nameParts = user.name.split(" ");
     if (nameParts.length === 1) return nameParts[0].substring(0, 2).toUpperCase();
     return (nameParts[0][0] + nameParts[nameParts.length - 1][0]).toUpperCase();
+  };
+
+  // Save profile changes
+  const handleSaveProfile = async () => {
+    try {
+      const res = await apiRequest("PATCH", "/api/user", { name, username, email });
+      if (res.ok) {
+        toast({ title: "Profile updated", description: "Your profile has been updated." });
+      } else {
+        const err = await res.json();
+        toast({ title: "Error", description: err.message || "Failed to update profile.", variant: "destructive" });
+      }
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Failed to update profile.", variant: "destructive" });
+    }
+  };
+
+  // Save notification preferences
+  const handleSaveNotifications = async () => {
+    try {
+      const res = await apiRequest("PATCH", "/api/user/notifications", {
+        emailNotifications,
+        taskAssignments,
+        projectUpdates,
+        deadlineReminders,
+        teamMessages
+      });
+      if (res.ok) {
+        toast({ title: "Preferences updated", description: "Your notification preferences have been updated." });
+      } else {
+        const err = await res.json();
+        toast({ title: "Error", description: err.message || "Failed to update preferences.", variant: "destructive" });
+      }
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Failed to update preferences.", variant: "destructive" });
+    }
+  };
+
+  // Save password change
+  const handleUpdatePassword = async () => {
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      toast({ title: "Error", description: "All password fields are required.", variant: "destructive" });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast({ title: "Error", description: "New passwords do not match.", variant: "destructive" });
+      return;
+    }
+    try {
+      const res = await apiRequest("PATCH", "/api/user/password", { currentPassword, newPassword });
+      if (res.ok) {
+        toast({ title: "Password updated", description: "Your password has been changed." });
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+      } else {
+        const err = await res.json();
+        toast({ title: "Error", description: err.message || "Failed to update password.", variant: "destructive" });
+      }
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Failed to update password.", variant: "destructive" });
+    }
   };
 
   return (
@@ -48,7 +119,6 @@ export default function SettingsPage() {
             <TabsTrigger value="profile">Profile</TabsTrigger>
             <TabsTrigger value="notifications">Notifications</TabsTrigger>
             <TabsTrigger value="password">Password & Security</TabsTrigger>
-            <TabsTrigger value="appearance">Appearance</TabsTrigger>
           </TabsList>
           
           {/* Profile Tab */}
@@ -83,18 +153,23 @@ export default function SettingsPage() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="name">Full Name</Label>
-                        <Input 
-                          id="name" 
-                          value={name} 
-                          onChange={(e) => setName(e.target.value)} 
-                        />
+                        <div className="flex items-center gap-2">
+                          <Input 
+                            id="name" 
+                            value={name} 
+                            onChange={(e) => setName(e.target.value)} 
+                          />
+                          {user.googleId && (
+                            <span className="text-xs text-gray-400">({user.googleId})</span>
+                          )}
+                        </div>
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="username">Username</Label>
                         <Input 
                           id="username" 
-                          value={user?.username} 
-                          disabled 
+                          value={username}
+                          onChange={(e) => setUsername(e.target.value)}
                         />
                       </div>
                       <div className="space-y-2">
@@ -106,27 +181,10 @@ export default function SettingsPage() {
                           onChange={(e) => setEmail(e.target.value)} 
                         />
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="role">Role</Label>
-                        <Select 
-                          value={role} 
-                          onValueChange={(value) => setRole(value as UserRole)}
-                        >
-                          <SelectTrigger id="role">
-                            <SelectValue placeholder="Select a role" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value={UserRole.ADMIN}>Administrator</SelectItem>
-                            <SelectItem value={UserRole.TEAM_LEADER}>Team Leader</SelectItem>
-                            <SelectItem value={UserRole.TEAM_MEMBER}>Team Member</SelectItem>
-                            <SelectItem value={UserRole.CLIENT}>Client</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
                     </div>
                     
                     <div className="pt-2">
-                      <Button>
+                      <Button onClick={handleSaveProfile}>
                         <Save className="mr-2 h-4 w-4" />
                         Save Changes
                       </Button>
@@ -203,7 +261,7 @@ export default function SettingsPage() {
                 </div>
                 
                 <div className="pt-2">
-                  <Button>
+                  <Button onClick={handleSaveNotifications}>
                     <Save className="mr-2 h-4 w-4" />
                     Save Preferences
                   </Button>
@@ -223,66 +281,20 @@ export default function SettingsPage() {
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="current-password">Current Password</Label>
-                    <Input id="current-password" type="password" />
+                    <Input id="current-password" type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} />
                   </div>
-                  
                   <div className="space-y-2">
                     <Label htmlFor="new-password">New Password</Label>
-                    <Input id="new-password" type="password" />
+                    <Input id="new-password" type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
                   </div>
-                  
                   <div className="space-y-2">
                     <Label htmlFor="confirm-password">Confirm New Password</Label>
-                    <Input id="confirm-password" type="password" />
+                    <Input id="confirm-password" type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} />
                   </div>
                 </div>
                 
                 <div className="pt-2">
-                  <Button>Update Password</Button>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-          
-          {/* Appearance Tab */}
-          <TabsContent value="appearance">
-            <Card>
-              <CardHeader>
-                <CardTitle>Appearance</CardTitle>
-                <CardDescription>Customize how TaskCollab looks for you</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="theme">Theme</Label>
-                    <Select defaultValue="light">
-                      <SelectTrigger id="theme">
-                        <SelectValue placeholder="Select a theme" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="light">Light</SelectItem>
-                        <SelectItem value="dark">Dark</SelectItem>
-                        <SelectItem value="system">System Default</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="layout">Default Layout</Label>
-                    <Select defaultValue="sidebar">
-                      <SelectTrigger id="layout">
-                        <SelectValue placeholder="Select a layout" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="sidebar">Sidebar Navigation</SelectItem>
-                        <SelectItem value="topnav">Top Navigation</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                
-                <div className="pt-2">
-                  <Button>Save Preferences</Button>
+                  <Button onClick={handleUpdatePassword}>Update Password</Button>
                 </div>
               </CardContent>
             </Card>

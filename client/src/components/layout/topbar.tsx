@@ -34,7 +34,7 @@ export function Topbar() {
     if (path === "/calendar") return "Calendar";
     if (path === "/settings") return "Settings";
     
-    return "TaskCollab";
+    return "My To Do";
   };
 
   return (
@@ -53,7 +53,7 @@ export function Topbar() {
           )}
           
           {isMobile && (
-            <h1 className="text-xl font-bold text-indigo-600">TaskCollab</h1>
+            <h1 className="text-xl font-bold text-indigo-600">My To Do</h1>
           )}
           
           {!isMobile && (

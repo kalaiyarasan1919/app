@@ -1,10 +1,33 @@
+import dotenv from 'dotenv';
+dotenv.config();
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import session from 'express-session';
+import cors from 'cors';
+import connectDB from './db';
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// Allow CORS for frontend (adjust origin as needed)
+app.use(cors({
+  origin: 'http://localhost:3000', // Change if your frontend runs elsewhere
+  credentials: true
+}));
+
+// Session setup
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your_secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    secure: false, // Set to true if using HTTPS
+    sameSite: 'lax', // Use 'none' if using HTTPS and cross-site cookies
+  }
+}));
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -37,6 +60,9 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Connect to MongoDB
+  await connectDB();
+  
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

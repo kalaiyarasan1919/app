@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,11 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Send, Heart, UserCheck, Users, Sparkles, Star, LucideIcon, Check, History } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { Send, Heart, UserCheck, Users, Sparkles, Star, LucideIcon, Check, History, Loader2 } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useAuth } from "@/hooks/use-auth";
 
 // Define the feedback form schema
 const feedbackFormSchema = z.object({
@@ -35,17 +39,18 @@ type FeedbackFormValues = z.infer<typeof feedbackFormSchema>;
 
 // Feedback submission history interface
 interface FeedbackSubmission {
-  id: string;
-  date: Date;
+  id: number;
+  date: string;
   status: "pending" | "reviewed" | "implemented";
   category: string;
   type: string;
+  rating: number;
   preview: string;
 }
 
 export default function FeedbackPage() {
   const { toast } = useToast();
-  const [submittedFeedback, setSubmittedFeedback] = useState<FeedbackSubmission[]>([]);
+  const { user } = useAuth();
   const [feedbackStats, setFeedbackStats] = useState({
     total: 0,
     implemented: 0,
@@ -65,44 +70,88 @@ export default function FeedbackPage() {
     },
   });
 
+  // Fetch feedback data
+  const { data: feedbackData = [], isLoading } = useQuery({
+    queryKey: ["/api/feedback"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/feedback");
+      return res.json();
+    },
+  });
+
+  // Update stats when feedback data changes
+  useEffect(() => {
+    if (feedbackData.length > 0) {
+      setFeedbackStats({
+        total: feedbackData.length,
+        implemented: feedbackData.filter((f: any) => f.status === "implemented").length,
+        reviewed: feedbackData.filter((f: any) => f.status === "reviewed").length,
+        pending: feedbackData.filter((f: any) => f.status === "pending").length,
+      });
+    }
+  }, [feedbackData]);
+
+  // Submit feedback mutation
+  const submitFeedbackMutation = useMutation({
+    mutationFn: async (values: FeedbackFormValues) => {
+      const res = await apiRequest("POST", "/api/feedback", values);
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Feedback Submitted",
+        description: "Thank you for your feedback! It will be reviewed by the team.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/feedback"] });
+      form.reset({
+        category: undefined,
+        type: undefined,
+        rating: undefined,
+        message: "",
+        anonymous: true,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: `Failed to submit feedback: ${error.message}`,
+        variant: "destructive",
+      });
+    },
+  });
+
   // Handle form submission
   const onSubmit = (values: FeedbackFormValues) => {
-    // In a real application, this would send the data to the server
-    console.log("Feedback submitted:", values);
-    
-    // Show success message
-    toast({
-      title: "Feedback Submitted",
-      description: "Thank you for your anonymous feedback! It will be reviewed by the team.",
-      variant: "default",
-    });
-    
-    // Add to submission history
-    const newSubmission: FeedbackSubmission = {
-      id: `feedback-${Date.now()}`,
-      date: new Date(),
-      status: "pending",
-      category: values.category,
-      type: values.type,
-      preview: values.message.substring(0, 30) + (values.message.length > 30 ? "..." : ""),
-    };
-    
-    setSubmittedFeedback([newSubmission, ...submittedFeedback]);
-    setFeedbackStats({
-      total: feedbackStats.total + 1,
-      implemented: feedbackStats.implemented,
-      reviewed: feedbackStats.reviewed,
-      pending: feedbackStats.pending + 1,
-    });
-    
-    // Reset form
-    form.reset({
-      category: undefined,
-      type: undefined,
-      rating: undefined,
-      message: "",
-      anonymous: true,
-    });
+    submitFeedbackMutation.mutate(values);
+  };
+
+  // Get status badge color
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "implemented":
+        return "bg-green-100 text-green-800 border-green-200";
+      case "reviewed":
+        return "bg-blue-100 text-blue-800 border-blue-200";
+      case "pending":
+      default:
+        return "bg-yellow-100 text-yellow-800 border-yellow-200";
+    }
+  };
+
+  // Get category icon
+  const getCategoryIcon = (category: string): LucideIcon => {
+    switch (category) {
+      case "team":
+        return Users;
+      case "project":
+        return Sparkles;
+      case "process":
+        return Check;
+      case "leadership":
+        return UserCheck;
+      default:
+        return Heart;
+    }
   };
 
   return (
@@ -201,23 +250,17 @@ export default function FeedbackPage() {
                                     <FormControl>
                                       <RadioGroupItem
                                         value={value.toString()}
-                                        className="sr-only peer"
+                                        className="sr-only"
                                         id={`rating-${value}`}
                                       />
                                     </FormControl>
-                                    <label
+                                    <Label
                                       htmlFor={`rating-${value}`}
-                                      className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-3 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary cursor-pointer flex-1"
+                                      className="flex flex-col items-center cursor-pointer"
                                     >
-                                      <Star
-                                        className={`h-5 w-5 ${
-                                          parseInt(field.value || "0") >= value
-                                            ? "fill-primary text-primary"
-                                            : "text-muted-foreground"
-                                        }`}
-                                      />
-                                      <span className="text-xs mt-1">{value}</span>
-                                    </label>
+                                      <Star className="h-6 w-6 text-gray-300 hover:text-yellow-400" />
+                                      <span className="text-xs">{value}</span>
+                                    </Label>
                                   </FormItem>
                                 ))}
                               </RadioGroup>
@@ -235,7 +278,7 @@ export default function FeedbackPage() {
                             <FormLabel>Your Feedback</FormLabel>
                             <FormControl>
                               <Textarea
-                                placeholder="Share your thoughts, ideas, concerns, or praise..."
+                                placeholder="Share your thoughts, suggestions, or concerns..."
                                 className="min-h-[120px]"
                                 {...field}
                               />
@@ -249,32 +292,41 @@ export default function FeedbackPage() {
                         control={form.control}
                         name="anonymous"
                         render={({ field }) => (
-                          <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
+                          <FormItem className="flex flex-row items-start space-x-3 space-y-0">
                             <FormControl>
-                              <div className="flex h-4 w-4 items-center justify-center">
-                                <input
-                                  type="checkbox"
-                                  checked={field.value}
-                                  onChange={field.onChange}
-                                  className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600"
-                                />
-                              </div>
+                              <input
+                                type="checkbox"
+                                checked={field.value}
+                                onChange={field.onChange}
+                                className="mt-1"
+                              />
                             </FormControl>
                             <div className="space-y-1 leading-none">
-                              <FormLabel className="font-normal">
-                                Submit Anonymously
-                              </FormLabel>
-                              <p className="text-xs text-muted-foreground">
-                                Your identity will be kept confidential when submitting this feedback
+                              <FormLabel>Submit anonymously</FormLabel>
+                              <p className="text-sm text-gray-500">
+                                Your identity will be hidden from the feedback
                               </p>
                             </div>
                           </FormItem>
                         )}
                       />
                       
-                      <Button type="submit" className="w-full">
-                        <Send className="mr-2 h-4 w-4" />
-                        Submit Feedback
+                      <Button 
+                        type="submit" 
+                        className="w-full"
+                        disabled={submitFeedbackMutation.isPending}
+                      >
+                        {submitFeedbackMutation.isPending ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Submitting...
+                          </>
+                        ) : (
+                          <>
+                            <Send className="mr-2 h-4 w-4" />
+                            Submit Feedback
+                          </>
+                        )}
                       </Button>
                     </form>
                   </Form>
@@ -283,49 +335,59 @@ export default function FeedbackPage() {
               
               <TabsContent value="history">
                 <CardContent>
-                  {submittedFeedback.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-10 text-gray-500">
-                      <History className="h-12 w-12 mb-4 text-gray-300" />
-                      <p className="mb-2">No feedback submissions yet</p>
-                      <p className="text-sm">Your feedback history will appear here after submission</p>
+                  {isLoading ? (
+                    <div className="flex items-center justify-center h-32">
+                      <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+                    </div>
+                  ) : feedbackData.length === 0 ? (
+                    <div className="text-center py-8 text-gray-500">
+                      <History className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                      <p>No feedback submitted yet</p>
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      {submittedFeedback.map((feedback) => (
-                        <div key={feedback.id} className="flex items-start border rounded-lg p-4">
-                          <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center mr-3 flex-shrink-0">
-                            {feedback.status === "implemented" ? (
-                              <Check className="h-5 w-5 text-green-500" />
-                            ) : (
-                              <History className="h-5 w-5 text-gray-400" />
-                            )}
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex justify-between items-start">
-                              <div>
-                                <h4 className="font-medium text-gray-900 capitalize">
-                                  {feedback.category} {feedback.type}
-                                </h4>
-                                <p className="text-gray-500 text-sm mt-1">{feedback.preview}</p>
+                      {feedbackData.map((feedback: any) => {
+                        const CategoryIcon = getCategoryIcon(feedback.category);
+                        return (
+                          <div key={feedback.id} className="border rounded-lg p-4">
+                            <div className="flex items-start justify-between mb-2">
+                              <div className="flex items-center space-x-2">
+                                <CategoryIcon className="h-4 w-4 text-gray-500" />
+                                <span className="text-sm font-medium capitalize">
+                                  {feedback.category}
+                                </span>
+                                <span className="text-sm text-gray-500">•</span>
+                                <span className="text-sm text-gray-500 capitalize">
+                                  {feedback.type}
+                                </span>
                               </div>
-                              <span
-                                className={`px-2 py-1 rounded-full text-xs ${
-                                  feedback.status === "implemented"
-                                    ? "bg-green-100 text-green-800"
-                                    : feedback.status === "reviewed"
-                                    ? "bg-blue-100 text-blue-800"
-                                    : "bg-gray-100 text-gray-800"
-                                }`}
-                              >
-                                {feedback.status.charAt(0).toUpperCase() + feedback.status.slice(1)}
-                              </span>
+                              <div className="flex items-center space-x-2">
+                                <div className="flex">
+                                  {[1, 2, 3, 4, 5].map((star) => (
+                                    <Star
+                                      key={star}
+                                      className={`h-4 w-4 ${
+                                        star <= feedback.rating
+                                          ? "text-yellow-400 fill-current"
+                                          : "text-gray-300"
+                                      }`}
+                                    />
+                                  ))}
+                                </div>
+                                <span className={`px-2 py-1 text-xs rounded-full border ${getStatusColor(feedback.status)}`}>
+                                  {feedback.status}
+                                </span>
+                              </div>
                             </div>
-                            <div className="mt-2 text-xs text-gray-500">
-                              Submitted on {feedback.date.toLocaleDateString()}
-                            </div>
+                            <p className="text-sm text-gray-600 mb-2">
+                              {feedback.message}
+                            </p>
+                            <p className="text-xs text-gray-400">
+                              Submitted on {new Date(feedback.created_at).toLocaleDateString()}
+                            </p>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </CardContent>
@@ -333,86 +395,52 @@ export default function FeedbackPage() {
             </Tabs>
           </Card>
           
-          {/* Feedback Stats & Info */}
-          <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Feedback Stats</CardTitle>
-                <CardDescription>Overview of feedback submissions</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="rounded-lg border p-3">
-                    <div className="text-sm font-medium text-gray-500">Total</div>
-                    <div className="mt-1 flex items-baseline">
-                      <span className="text-2xl font-semibold text-gray-900">{feedbackStats.total}</span>
-                    </div>
-                  </div>
-                  <div className="rounded-lg border p-3">
-                    <div className="text-sm font-medium text-green-500">Implemented</div>
-                    <div className="mt-1 flex items-baseline">
-                      <span className="text-2xl font-semibold text-gray-900">{feedbackStats.implemented}</span>
-                    </div>
-                  </div>
-                  <div className="rounded-lg border p-3">
-                    <div className="text-sm font-medium text-blue-500">Reviewed</div>
-                    <div className="mt-1 flex items-baseline">
-                      <span className="text-2xl font-semibold text-gray-900">{feedbackStats.reviewed}</span>
-                    </div>
-                  </div>
-                  <div className="rounded-lg border p-3">
-                    <div className="text-sm font-medium text-gray-500">Pending</div>
-                    <div className="mt-1 flex items-baseline">
-                      <span className="text-2xl font-semibold text-gray-900">{feedbackStats.pending}</span>
-                    </div>
-                  </div>
+          {/* Stats Panel */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Feedback Stats</CardTitle>
+              <CardDescription>Overview of feedback submissions</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-indigo-600">{feedbackStats.total}</div>
+                  <div className="text-sm text-gray-500">Total</div>
                 </div>
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardHeader>
-                <CardTitle>About Anonymous Feedback</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-start space-x-3">
-                  <div className="bg-indigo-100 rounded-full p-2">
-                    <UserCheck className="h-5 w-5 text-indigo-600" />
-                  </div>
-                  <div>
-                    <h4 className="font-medium">100% Anonymous</h4>
-                    <p className="text-sm text-gray-500">
-                      Your identity is never revealed with anonymous submissions
-                    </p>
-                  </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-green-600">{feedbackStats.implemented}</div>
+                  <div className="text-sm text-gray-500">Implemented</div>
                 </div>
-                
-                <div className="flex items-start space-x-3">
-                  <div className="bg-indigo-100 rounded-full p-2">
-                    <Heart className="h-5 w-5 text-indigo-600" />
-                  </div>
-                  <div>
-                    <h4 className="font-medium">Honest Feedback</h4>
-                    <p className="text-sm text-gray-500">
-                      Share constructive thoughts without fear of repercussions
-                    </p>
-                  </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-blue-600">{feedbackStats.reviewed}</div>
+                  <div className="text-sm text-gray-500">Reviewed</div>
                 </div>
-                
-                <div className="flex items-start space-x-3">
-                  <div className="bg-indigo-100 rounded-full p-2">
-                    <Sparkles className="h-5 w-5 text-indigo-600" />
-                  </div>
-                  <div>
-                    <h4 className="font-medium">Drive Improvement</h4>
-                    <p className="text-sm text-gray-500">
-                      Help make our team and workspace better for everyone
-                    </p>
-                  </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-yellow-600">{feedbackStats.pending}</div>
+                  <div className="text-sm text-gray-500">Pending</div>
                 </div>
-              </CardContent>
-            </Card>
-          </div>
+              </div>
+              
+              <div className="pt-4 border-t">
+                <h4 className="font-medium mb-2">Feedback Categories</h4>
+                <div className="space-y-2">
+                  {["team", "project", "process", "leadership", "other"].map((category) => {
+                    const CategoryIcon = getCategoryIcon(category);
+                    const count = feedbackData.filter((f: any) => f.category === category).length;
+                    return (
+                      <div key={category} className="flex items-center justify-between text-sm">
+                        <div className="flex items-center space-x-2">
+                          <CategoryIcon className="h-4 w-4 text-gray-500" />
+                          <span className="capitalize">{category}</span>
+                        </div>
+                        <span className="font-medium">{count}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </MainLayout>

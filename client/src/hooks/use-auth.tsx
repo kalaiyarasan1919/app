@@ -16,6 +16,8 @@ type AuthContextType = {
   loginMutation: UseMutationResult<User, Error, LoginData>;
   logoutMutation: UseMutationResult<void, Error, void>;
   registerMutation: UseMutationResult<User, Error, RegisterData>;
+  googleLogin: () => void;
+  checkAuth: () => Promise<void>;
 };
 
 type LoginData = {
@@ -85,7 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       queryClient.setQueryData(["/api/user"], user);
       toast({
         title: "Registration successful",
-        description: `Welcome to TaskCollab, ${user.name}!`,
+        description: `Welcome to My To Do, ${user.name}!`,
       });
       
       // Navigate to the dashboard
@@ -120,6 +122,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
   });
 
+  const googleLogin = () => {
+    window.location.href = "/api/auth/google";
+  };
+
+  const checkAuth = async () => {
+    try {
+      const response = await apiRequest("GET", "/api/user");
+      
+      if (response.ok) {
+        const user = await response.json();
+        queryClient.setQueryData(["/api/user"], user);
+      } else {
+        queryClient.setQueryData(["/api/user"], null);
+      }
+    } catch (error) {
+      console.error("Auth check error:", error);
+      queryClient.setQueryData(["/api/user"], null);
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -129,6 +151,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loginMutation,
         logoutMutation,
         registerMutation,
+        googleLogin,
+        checkAuth,
       }}
     >
       {children}

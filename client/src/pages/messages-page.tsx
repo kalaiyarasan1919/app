@@ -43,95 +43,20 @@ export default function MessagesPage() {
   const [newConversationName, setNewConversationName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Sample conversations for demonstration purposes
-  const [conversations, setConversations] = useState<Conversation[]>([
-    {
-      id: 1,
-      name: "Project Kickoff",
-      lastMessage: "Let's discuss the timeline",
-      time: "2 minutes ago",
-      unread: 3,
-    },
-    {
-      id: 2,
-      name: "Design Reviews",
-      lastMessage: "I've uploaded the latest mockups",
-      time: "2 hours ago",
-      unread: 0,
-    },
-    {
-      id: 3,
-      name: "Development Team",
-      lastMessage: "The new feature is ready for testing",
-      time: "Yesterday",
-      unread: 0,
-    },
-  ]);
+  // Start with empty conversations
+  const [conversations, setConversations] = useState<Conversation[]>([]);
 
-  // Sample messages for demonstration purposes
-  const [messagesMap, setMessagesMap] = useState<MessagesMap>({
-    1: [
-      {
-        id: 1,
-        sender: "Sarah Johnson",
-        content: "Hey team, just wanted to check in on the progress for the dashboard component.",
-        time: "10:30 AM",
-        isMine: false,
-      },
-      {
-        id: 2,
-        sender: user?.name || "You",
-        content: "I've completed the initial design and pushing the code now.",
-        time: "10:32 AM",
-        isMine: true,
-      },
-      {
-        id: 3,
-        sender: "Mike Peterson",
-        content: "Great! I'll review it this afternoon.",
-        time: "10:35 AM",
-        isMine: false,
-      },
-      {
-        id: 4,
-        sender: "Sarah Johnson",
-        content: "Thanks for the quick turnaround!",
-        time: "10:36 AM",
-        isMine: false,
-      },
-    ],
-    2: [
-      {
-        id: 1,
-        sender: "Alex Rodriguez",
-        content: "The latest mockups are available for review.",
-        time: "1:15 PM",
-        isMine: false,
-      },
-      {
-        id: 2,
-        sender: user?.name || "You",
-        content: "I'll take a look and provide feedback.",
-        time: "1:20 PM",
-        isMine: true,
-      },
-    ],
-    3: [
-      {
-        id: 1,
-        sender: "Jessica Chen",
-        content: "The new feature has been implemented and is ready for testing.",
-        time: "Yesterday",
-        isMine: false,
-      },
-    ],
-  });
+  // Start with empty messages
+  const [messagesMap, setMessagesMap] = useState<MessagesMap>({});
   
   // Get active conversation name
   const activeConversationData = conversations.find(c => c.id === activeConversation);
   
   // Get messages for active conversation
   const messages = messagesMap[activeConversation] || [];
+  
+  // Check if there are any conversations
+  const hasConversations = conversations.length > 0;
   
   // Function to handle sending a new message
   const handleSendMessage = () => {
@@ -279,7 +204,13 @@ export default function MessagesPage() {
             </div>
             
             <CardContent className="overflow-y-auto flex-1 p-0">
-              {filteredConversations.length === 0 ? (
+              {!hasConversations ? (
+                <div className="p-8 text-center text-gray-500">
+                  <MessageSquare className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                  <p className="text-lg font-medium mb-2">No conversations yet</p>
+                  <p className="text-sm">Create your first conversation to start messaging with your team</p>
+                </div>
+              ) : filteredConversations.length === 0 ? (
                 <div className="p-4 text-center text-gray-500">
                   <p>No conversations found</p>
                 </div>
@@ -351,7 +282,12 @@ export default function MessagesPage() {
             </CardHeader>
             
             <CardContent className="overflow-y-auto flex-1 p-4 space-y-4">
-              {messages.length === 0 ? (
+              {!activeConversationData ? (
+                <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                  <MessageSquare className="h-12 w-12 mb-4 text-gray-300" />
+                  <p className="text-center">Select a conversation or create a new one to start messaging</p>
+                </div>
+              ) : messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-gray-500">
                   <MessageSquare className="h-12 w-12 mb-4 text-gray-300" />
                   <p className="text-center">No messages yet. Start the conversation!</p>
@@ -394,7 +330,7 @@ export default function MessagesPage() {
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button size="icon" variant="ghost" className="rounded-full">
+                      <Button size="icon" variant="ghost" className="rounded-full" disabled={!activeConversationData}>
                         <Paperclip className="h-4 w-4" />
                       </Button>
                     </TooltipTrigger>
@@ -405,17 +341,18 @@ export default function MessagesPage() {
                 </TooltipProvider>
                 
                 <Input 
-                  placeholder="Type a message..." 
+                  placeholder={activeConversationData ? "Type a message..." : "Select a conversation to start messaging"}
                   className="flex-1" 
                   value={newMessageText}
                   onChange={(e) => setNewMessageText(e.target.value)}
                   onKeyDown={handleKeyDown}
+                  disabled={!activeConversationData}
                 />
                 
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button size="icon" variant="ghost" className="rounded-full">
+                      <Button size="icon" variant="ghost" className="rounded-full" disabled={!activeConversationData}>
                         <Smile className="h-4 w-4" />
                       </Button>
                     </TooltipTrigger>
@@ -428,7 +365,7 @@ export default function MessagesPage() {
                 <Button 
                   size="icon" 
                   onClick={handleSendMessage}
-                  disabled={!newMessageText.trim()}
+                  disabled={!newMessageText.trim() || !activeConversationData}
                 >
                   <Send className="h-4 w-4" />
                 </Button>

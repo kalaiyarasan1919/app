@@ -17,13 +17,13 @@ import { useAuth } from "@/hooks/use-auth";
 
 // Define TypeScript interfaces for file data
 interface FileData {
-  id: number;
+  _id: string;
   name: string;
   type: string;
   size: string;
   uploadedBy: string;
   uploaded: string;
-  project: string;
+  task_id: string;
 }
 
 export default function FilesPage() {
@@ -31,73 +31,10 @@ export default function FilesPage() {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | undefined>(undefined);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>(undefined);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Define project interface
-  interface Project {
-    id: number;
-    name: string;
-  }
-  
-  // Fetch projects for dropdown - we'll use some sample data for demo
-  const { data: projects = [
-    { id: 1, name: 'Website Redesign' },
-    { id: 2, name: 'Mobile App' },
-    { id: 3, name: 'CRM Integration' }
-  ] as Project[] } = useQuery({
-    queryKey: ['/api/projects'],
-    queryFn: async () => {
-      try {
-        const res = await fetch('/api/projects', { credentials: 'include' });
-        if (!res.ok) throw new Error('Failed to fetch projects');
-        return res.json();
-      } catch (error) {
-        // Return sample data if API fails
-        return [
-          { id: 1, name: 'Website Redesign' },
-          { id: 2, name: 'Mobile App' },
-          { id: 3, name: 'CRM Integration' }
-        ];
-      }
-    }
-  });
-
-  // Fetch tasks for dropdown (when project is selected)
-  const { data: projectTasks = [] } = useQuery({
-    queryKey: ['/api/tasks', selectedProjectId],
-    queryFn: async () => {
-      if (!selectedProjectId) return [];
-      
-      try {
-        const res = await fetch(`/api/projects/${selectedProjectId}/tasks`, { credentials: 'include' });
-        if (!res.ok) throw new Error('Failed to fetch tasks');
-        return res.json();
-      } catch (error) {
-        // Return sample tasks if API fails
-        const sampleTasks: Record<string, Array<{id: number; title: string}>> = {
-          '1': [
-            { id: 1, title: 'Create wireframes' },
-            { id: 2, title: 'Design homepage mockup' }
-          ],
-          '2': [
-            { id: 3, title: 'Develop login screen' },
-            { id: 4, title: 'Implement API integration' }
-          ],
-          '3': [
-            { id: 5, title: 'Setup CRM API' },
-            { id: 6, title: 'Test data synchronization' }
-          ]
-        };
-        
-        return sampleTasks[selectedProjectId] || [];
-      }
-    },
-    enabled: !!selectedProjectId
-  });
+  const [selectedTaskId, setSelectedTaskId] = useState("");
 
   // Fetch files
   const { data: userFiles = [], isLoading: isLoadingFiles, refetch: refetchFiles } = useQuery({
@@ -108,6 +45,19 @@ export default function FilesPage() {
       return res.json();
     }
   });
+
+  // Fetch tasks
+  const { data: tasks = { tasks: [] }, isLoading: isLoadingTasks, refetch: refetchTasks } = useQuery({
+    queryKey: ['/api/tasks'],
+    queryFn: async () => {
+      const res = await fetch('/api/tasks', { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to fetch tasks');
+      return res.json();
+    }
+  });
+
+  // Use the array of tasks from the paginated response
+  const taskArray = tasks.tasks || [];
 
   // File upload mutation
   const uploadMutation = useMutation({
@@ -128,10 +78,6 @@ export default function FilesPage() {
       } catch (error) {
         // For demonstration purposes, simulate a successful upload with mock data
         const file = formData.get('file') as File;
-        const projectId = formData.get('project_id') as string;
-        
-        // Find the project name
-        const project = projects.find((p: Project) => p.id.toString() === projectId);
         
         return {
           id: Math.floor(Math.random() * 1000) + 10,
@@ -140,7 +86,7 @@ export default function FilesPage() {
           size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
           uploadedBy: user?.name || 'You',
           uploaded: 'Just now',
-          project: project?.name || 'Unknown Project'
+          task_id: selectedTaskId,
         };
       }
     },
@@ -151,8 +97,6 @@ export default function FilesPage() {
       });
       // Reset form and close modal
       setSelectedFile(null);
-      setSelectedProjectId(undefined);
-      setSelectedTaskId(undefined);
       setIsUploadModalOpen(false);
       // Refetch files
       refetchFiles();
@@ -187,63 +131,20 @@ export default function FilesPage() {
       return;
     }
 
-    if (!selectedProjectId) {
-      toast({
-        title: 'Missing project',
-        description: 'Please select a project for this file',
-        variant: 'destructive',
-      });
-      return;
-    }
-
     setIsUploading(true);
     
     const formData = new FormData();
     formData.append('file', selectedFile);
-    formData.append('project_id', selectedProjectId);
-    if (selectedTaskId) {
-      formData.append('task_id', selectedTaskId);
-    }
     
     uploadMutation.mutate(formData);
   };
 
-  // For example purposes, we'll use our own files array since the API isn't fully implemented
-  const files = userFiles.length > 0 ? userFiles : [
-    {
-      id: 1,
-      name: "Project Requirements.pdf",
-      type: "pdf",
-      size: "2.4 MB",
-      uploadedBy: user?.name || "Admin",
-      uploaded: "2 days ago",
-      project: "Website Redesign",
-    },
-    {
-      id: 2,
-      name: "Design Mockups.png",
-      type: "image",
-      size: "4.8 MB",
-      uploadedBy: user?.name || "Admin",
-      uploaded: "Yesterday",
-      project: "Mobile App",
-    },
-    {
-      id: 3,
-      name: "Meeting Notes.docx",
-      type: "document",
-      size: "1.2 MB",
-      uploadedBy: user?.name || "Admin",
-      uploaded: "5 hours ago",
-      project: "Website Redesign",
-    }
-  ];
+  // Use only the files from the API
+  const files = userFiles;
 
   // Filter files based on search query
   const filteredFiles = files.filter((file: FileData) => 
-    file.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    file.project.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    file.uploadedBy.toLowerCase().includes(searchQuery.toLowerCase())
+    file.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   // Get file icon based on type
@@ -263,8 +164,6 @@ export default function FilesPage() {
         return <FileIcon className="h-5 w-5 text-gray-500" />;
     }
   };
-
-  // Interface is defined at the top of the file
 
   return (
     <MainLayout>
@@ -307,47 +206,24 @@ export default function FilesPage() {
                 </div>
               )}
             </div>
-            <div>
-              <Label htmlFor="project">Project</Label>
+            <div className="grid items-center gap-4">
+              <Label htmlFor="task">Task</Label>
               <Select
-                value={selectedProjectId}
-                onValueChange={(value) => {
-                  setSelectedProjectId(value);
-                  setSelectedTaskId(undefined);
-                }}
+                value={selectedTaskId}
+                onValueChange={setSelectedTaskId}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select a project" />
+                  <SelectValue placeholder="Select a task" />
                 </SelectTrigger>
                 <SelectContent>
-                  {projects.map((project: any) => (
-                    <SelectItem key={project.id} value={project.id.toString()}>
-                      {project.name}
+                  {taskArray.map((task: any) => (
+                    <SelectItem key={task._id} value={task._id}>
+                      {task.title}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            {selectedProjectId && (
-              <div>
-                <Label htmlFor="task">Task (Optional)</Label>
-                <Select
-                  value={selectedTaskId}
-                  onValueChange={(value) => setSelectedTaskId(value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a task (optional)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {projectTasks.map((task: any) => (
-                      <SelectItem key={task.id} value={task.id.toString()}>
-                        {task.title}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
           </div>
           <DialogFooter className="sm:justify-end">
             <DialogClose asChild>
@@ -379,7 +255,7 @@ export default function FilesPage() {
       <div className="flex flex-col gap-6">
         <div>
           <h1 className="text-3xl font-bold mb-2">Files</h1>
-          <p className="text-gray-500">Manage and share files across your projects</p>
+          <p className="text-gray-500">Manage and share files for your tasks</p>
         </div>
         
         <div className="flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
@@ -420,7 +296,7 @@ export default function FilesPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Name</TableHead>
-                      <TableHead>Project</TableHead>
+                      <TableHead>Task</TableHead>
                       <TableHead>Uploaded By</TableHead>
                       <TableHead>Date</TableHead>
                       <TableHead>Size</TableHead>
@@ -432,21 +308,20 @@ export default function FilesPage() {
                       <TableRow>
                         <TableCell colSpan={6} className="text-center py-10 text-gray-500">
                           <FileIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                          No files found
+                          <p className="text-lg font-medium mb-2">No files yet</p>
+                          <p className="text-sm">Upload your first file to get started</p>
                         </TableCell>
                       </TableRow>
                     ) : (
                       filteredFiles.map((file: FileData) => (
-                        <TableRow key={file.id}>
+                        <TableRow key={file._id}>
                           <TableCell>
                             <div className="flex items-center space-x-3">
                               {getFileIcon(file.type)}
                               <span>{file.name}</span>
                             </div>
                           </TableCell>
-                          <TableCell>
-                            <Badge variant="secondary">{file.project}</Badge>
-                          </TableCell>
+                          <TableCell>{file.task_id}</TableCell>
                           <TableCell>{file.uploadedBy}</TableCell>
                           <TableCell>{file.uploaded}</TableCell>
                           <TableCell>{file.size}</TableCell>

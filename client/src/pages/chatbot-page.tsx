@@ -5,55 +5,91 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/use-auth";
-import { Send, Bot, Loader2, ChevronDown } from "lucide-react";
+import { Send, Bot, Loader2, ChevronDown, Lightbulb, Target, Users, Clock, Zap, HelpCircle } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 type Message = {
   id: string;
   content: string;
   sender: "user" | "ai";
   timestamp: Date;
+  topic?: string;
+  confidence?: number;
+};
+
+type QuickQuestion = {
+  id: string;
+  text: string;
+  icon: React.ReactNode;
+  category: string;
 };
 
 export default function ChatbotPage() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [inputMessage, setInputMessage] = useState("");
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "welcome-message",
-      content: "Hello! I'm TaskCollab AI Assistant. How can I help you today?",
-      sender: "ai",
-      timestamp: new Date(),
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
-  // Sample AI responses for demonstration
-  const sampleResponses = [
-    "I can help you prioritize your tasks based on deadlines and importance.",
-    "Based on your current workload, I suggest focusing on the Website Redesign project first.",
-    "I've analyzed your team's performance. The development team has completed 85% of their assigned tasks this sprint.",
-    "Here's a summary of your upcoming deadlines: 3 tasks due tomorrow, 5 tasks due this week.",
-    "I notice you have several overlapping meetings next week. Would you like me to suggest some rescheduling options?",
-    "Your most active project this month is the Mobile App project with 24 completed tasks.",
-    "I can help you draft a progress report for your current project. Would you like me to do that?",
-    "Based on past performance, I estimate this task will take approximately 4-5 days to complete.",
+  // Quick questions for doubt clearing
+  const quickQuestions: QuickQuestion[] = [
+    {
+      id: "prioritize",
+      text: "How should I prioritize my tasks?",
+      icon: <Target className="h-4 w-4" />,
+      category: "task_prioritization"
+    },
+    {
+      id: "productivity",
+      text: "I'm feeling overwhelmed, any productivity tips?",
+      icon: <Zap className="h-4 w-4" />,
+      category: "productivity"
+    },
+    {
+      id: "team",
+      text: "How can I improve team collaboration?",
+      icon: <Users className="h-4 w-4" />,
+      category: "team_collaboration"
+    },
+    {
+      id: "timeline",
+      text: "How do I estimate project timelines?",
+      icon: <Clock className="h-4 w-4" />,
+      category: "time_estimation"
+    },
+    {
+      id: "technical",
+      text: "I'm stuck on a technical issue",
+      icon: <HelpCircle className="h-4 w-4" />,
+      category: "technical_implementation"
+    },
+    {
+      id: "motivation",
+      text: "I need motivation to complete tasks",
+      icon: <Lightbulb className="h-4 w-4" />,
+      category: "motivation"
+    }
   ];
-
+  
   // Scroll to bottom of chat when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Simulate sending a message to the AI assistant
-  const handleSendMessage = () => {
-    if (!inputMessage.trim()) return;
+  // Send message to AI API
+  const handleSendMessage = async (messageText?: string) => {
+    const textToSend = messageText || inputMessage;
+    if (!textToSend.trim()) return;
     
     // Add user message
     const userMessage: Message = {
       id: `user-${Date.now()}`,
-      content: inputMessage,
+      content: textToSend,
       sender: "user",
       timestamp: new Date(),
     };
@@ -62,17 +98,43 @@ export default function ChatbotPage() {
     setInputMessage("");
     setIsTyping(true);
     
-    // Simulate AI thinking and responding
-    setTimeout(() => {
+    try {
+      // Call the AI API
+      const response = await apiRequest("POST", "/api/chatbot", {
+        message: textToSend
+      });
+      
+      const data = await response.json();
+      
       const aiResponse: Message = {
         id: `ai-${Date.now()}`,
-        content: sampleResponses[Math.floor(Math.random() * sampleResponses.length)],
+        content: data.response,
+        sender: "ai",
+        timestamp: new Date(),
+        topic: data.topic,
+        confidence: data.confidence,
+      };
+      
+      setMessages(prev => [...prev, aiResponse]);
+    } catch (error) {
+      console.error("Chat API error:", error);
+      toast({
+        title: "Error",
+        description: "Failed to get AI response. Please try again.",
+        variant: "destructive",
+      });
+      
+      // Fallback response
+      const fallbackResponse: Message = {
+        id: `ai-${Date.now()}`,
+        content: "I'm having trouble processing your request right now. Please try again in a moment.",
         sender: "ai",
         timestamp: new Date(),
       };
-      setMessages(prev => [...prev, aiResponse]);
+      setMessages(prev => [...prev, fallbackResponse]);
+    } finally {
       setIsTyping(false);
-    }, 1500);
+    }
   };
 
   // Handle pressing Enter to send message
@@ -80,6 +142,11 @@ export default function ChatbotPage() {
     if (e.key === "Enter") {
       handleSendMessage();
     }
+  };
+
+  // Handle quick question click
+  const handleQuickQuestionClick = (question: QuickQuestion) => {
+    handleSendMessage(question.text);
   };
 
   // Get user initials for avatar
@@ -90,12 +157,34 @@ export default function ChatbotPage() {
     return (nameParts[0][0] + nameParts[nameParts.length - 1][0]).toUpperCase();
   };
 
+  // Get topic badge color
+  const getTopicBadgeColor = (topic?: string) => {
+    switch (topic) {
+      case "task_prioritization":
+        return "bg-blue-100 text-blue-800 border-blue-200";
+      case "productivity":
+        return "bg-green-100 text-green-800 border-green-200";
+      case "team_collaboration":
+        return "bg-purple-100 text-purple-800 border-purple-200";
+      case "project_management":
+        return "bg-orange-100 text-orange-800 border-orange-200";
+      case "technical_implementation":
+        return "bg-red-100 text-red-800 border-red-200";
+      case "time_estimation":
+        return "bg-yellow-100 text-yellow-800 border-yellow-200";
+      case "motivation":
+        return "bg-pink-100 text-pink-800 border-pink-200";
+      default:
+        return "bg-gray-100 text-gray-800 border-gray-200";
+    }
+  };
+
   return (
     <MainLayout>
       <div className="flex flex-col gap-6">
         <div>
           <h1 className="text-3xl font-bold mb-2">AI Assistant</h1>
-          <p className="text-gray-500">Get intelligent help with your tasks and projects</p>
+          <p className="text-gray-500">Get intelligent help to clear your doubts about tasks, projects, and team collaboration</p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -108,10 +197,10 @@ export default function ChatbotPage() {
                     <Bot className="h-4 w-4" />
                   </AvatarFallback>
                 </Avatar>
-                TaskCollab AI
+                My To Do AI
               </CardTitle>
               <CardDescription>
-                Your intelligent assistant for task management and productivity
+                Your intelligent assistant for clearing doubts about task management and productivity
               </CardDescription>
             </CardHeader>
             
@@ -141,9 +230,23 @@ export default function ChatbotPage() {
                           : "bg-gray-100 text-gray-900 rounded-tl-none"
                       }`}
                     >
-                      {message.content}
-                      <div className={`text-xs mt-1 ${message.sender === "user" ? "text-indigo-200" : "text-gray-500"}`}>
-                        {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      <div className="flex flex-col gap-2">
+                        <div>{message.content}</div>
+                        {message.sender === "ai" && message.topic && (
+                          <div className="flex items-center gap-2">
+                            <Badge className={`text-xs ${getTopicBadgeColor(message.topic)}`}>
+                              {message.topic.replace(/_/g, " ")}
+                            </Badge>
+                            {message.confidence && (
+                              <span className="text-xs text-gray-500">
+                                Confidence: {Math.round(message.confidence * 100)}%
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        <div className={`text-xs ${message.sender === "user" ? "text-indigo-200" : "text-gray-500"}`}>
+                          {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -174,74 +277,60 @@ export default function ChatbotPage() {
             <div className="p-4 border-t mt-auto">
               <div className="flex gap-2">
                 <Input
-                  placeholder="Type your message..."
+                  placeholder="Ask me anything about tasks, projects, or productivity..."
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
                   onKeyDown={handleKeyDown}
                   className="flex-1"
                 />
-                <Button size="icon" onClick={handleSendMessage}>
+                <Button 
+                  onClick={() => handleSendMessage()} 
+                  disabled={!inputMessage.trim() || isTyping}
+                  size="sm"
+                >
                   <Send className="h-4 w-4" />
                 </Button>
               </div>
             </div>
           </Card>
-          
-          {/* Suggestions Panel - Takes 1/4 of the width on larger screens */}
+
+          {/* Quick Questions Sidebar */}
           <Card className="md:col-span-1">
             <CardHeader className="pb-3">
-              <CardTitle>Suggestions</CardTitle>
-              <CardDescription>Quick prompts for the AI assistant</CardDescription>
+              <CardTitle className="text-lg">Quick Questions</CardTitle>
+              <CardDescription>
+                Common doubts and questions
+              </CardDescription>
             </CardHeader>
-            <CardContent>
-              <Tabs defaultValue="tasks">
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="tasks">Tasks</TabsTrigger>
-                  <TabsTrigger value="insights">Insights</TabsTrigger>
-                </TabsList>
-                
-                <TabsContent value="tasks" className="space-y-2 mt-4">
-                  {["Prioritize my tasks", "Suggest a schedule", "Draft a project update", "Estimate task completion", "Find bottlenecks"].map((suggestion, index) => (
-                    <Button
-                      key={index}
-                      variant="outline"
-                      className="w-full justify-start text-left h-auto py-2"
-                      onClick={() => {
-                        setInputMessage(suggestion);
-                      }}
-                    >
-                      {suggestion}
-                      <ChevronDown className="ml-auto h-4 w-4" />
-                    </Button>
-                  ))}
-                </TabsContent>
-                
-                <TabsContent value="insights" className="space-y-2 mt-4">
-                  {["Team performance analysis", "Project progress summary", "Productivity trends", "Workload distribution", "Deadline risk assessment"].map((suggestion, index) => (
-                    <Button
-                      key={index}
-                      variant="outline"
-                      className="w-full justify-start text-left h-auto py-2"
-                      onClick={() => {
-                        setInputMessage(suggestion);
-                      }}
-                    >
-                      {suggestion}
-                      <ChevronDown className="ml-auto h-4 w-4" />
-                    </Button>
-                  ))}
-                </TabsContent>
-              </Tabs>
-              
-              <div className="mt-6 p-3 bg-gray-100 rounded-lg text-sm text-gray-500">
-                <p className="font-medium text-gray-700 mb-1">About TaskCollab AI</p>
-                <p className="mb-2">
-                  This AI assistant can help you manage tasks, analyze project progress, and provide productivity insights.
-                </p>
-                <p>
-                  Note: In a production environment, this would connect to a real AI service.
-                </p>
+            <CardContent className="space-y-3">
+              <div className={`space-y-2 ${isExpanded ? '' : 'max-h-96 overflow-hidden'}`}>
+                {quickQuestions.map((question) => (
+                  <Button
+                    key={question.id}
+                    variant="outline"
+                    className="w-full justify-start text-left h-auto p-3"
+                    onClick={() => handleQuickQuestionClick(question)}
+                    disabled={isTyping}
+                  >
+                    <div className="flex items-center gap-2">
+                      {question.icon}
+                      <span className="text-sm">{question.text}</span>
+                    </div>
+                  </Button>
+                ))}
               </div>
+              
+              {quickQuestions.length > 6 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsExpanded(!isExpanded)}
+                  className="w-full"
+                >
+                  {isExpanded ? "Show Less" : "Show More"}
+                  <ChevronDown className={`h-4 w-4 ml-1 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                </Button>
+              )}
             </CardContent>
           </Card>
         </div>

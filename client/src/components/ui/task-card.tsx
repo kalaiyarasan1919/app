@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Task, TaskPriority, TaskStatus } from "@shared/schema";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Calendar, Clock, Folder, MoreHorizontal } from "lucide-react";
+import { Calendar, Clock, Folder, MoreHorizontal, Mail, UserPlus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -14,6 +14,8 @@ import { format } from "date-fns";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ShareTaskModal } from "@/components/modals/share-task-modal";
 
 type TaskCardProps = {
   task: Task;
@@ -24,14 +26,18 @@ type TaskCardProps = {
 export function TaskCard({ task, onEdit, onDelete }: TaskCardProps) {
   const { toast } = useToast();
   const [isChecked, setIsChecked] = useState(task.status === TaskStatus.COMPLETED);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
 
   const updateTaskMutation = useMutation({
     mutationFn: async ({ id, data }: { id: number; data: Partial<Task> }) => {
       await apiRequest("PUT", `/api/tasks/${id}`, data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+      queryClient.invalidateQueries({ 
+        predicate: (query) => 
+          query.queryKey[0] === "/api/tasks" || 
+          query.queryKey[0] === "/api/activities"
+      });
     },
     onError: () => {
       setIsChecked(!isChecked); // Revert checkbox state
@@ -46,10 +52,37 @@ export function TaskCard({ task, onEdit, onDelete }: TaskCardProps) {
   const handleCheckboxChange = (checked: boolean) => {
     setIsChecked(checked);
     updateTaskMutation.mutate({
-      id: task.id,
+              id: task._id,
       data: {
         status: checked ? TaskStatus.COMPLETED : TaskStatus.IN_PROGRESS,
       },
+    });
+  };
+
+  const handleShareViaGmail = () => {
+    const subject = encodeURIComponent(`Task: ${task.title}`);
+    
+    let body = `Task Details:\n\n`;
+    body += `Title: ${task.title}\n`;
+    if (task.description) {
+      body += `Description: ${task.description}\n`;
+    }
+    body += `Status: ${task.status}\n`;
+    body += `Priority: ${task.priority}\n`;
+    if (task.deadline) {
+      body += `Deadline: ${format(new Date(task.deadline), "MMMM d, yyyy")}\n`;
+    }
+    body += `Project ID: ${task.project_id}\n\n`;
+    body += `---\nShared from Collaborative Task Manager`;
+    
+    const encodedBody = encodeURIComponent(body);
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=&su=${subject}&body=${encodedBody}`;
+    
+    window.open(gmailUrl, '_blank');
+    
+    toast({
+      title: "Sharing task",
+      description: "Opening Gmail to share task details",
     });
   };
 
@@ -111,6 +144,28 @@ export function TaskCard({ task, onEdit, onDelete }: TaskCardProps) {
                 <span>Project {task.project_id}</span>
               </span>
             </div>
+            <div className="mt-2">
+              <Select
+                value={task.status}
+                onValueChange={(value) => {
+                  updateTaskMutation.mutate({
+                    id: task._id,
+                    data: { status: value },
+                  });
+                  setIsChecked(value === TaskStatus.COMPLETED);
+                }}
+              >
+                <SelectTrigger className="w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={TaskStatus.TODO}>To Do</SelectItem>
+                  <SelectItem value={TaskStatus.IN_PROGRESS}>In Progress</SelectItem>
+                  <SelectItem value={TaskStatus.REVIEW}>In Review</SelectItem>
+                  <SelectItem value={TaskStatus.COMPLETED}>Completed</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </div>
 
@@ -122,6 +177,22 @@ export function TaskCard({ task, onEdit, onDelete }: TaskCardProps) {
             {task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}
           </Badge>
 
+          <button
+            onClick={handleShareViaGmail}
+            className="p-1 rounded-full hover:bg-gray-100 text-gray-500 hover:text-blue-600 transition-colors"
+            title="Share via Gmail"
+          >
+            <Mail className="h-4 w-4" />
+          </button>
+
+          <button
+            onClick={() => setShareModalOpen(true)}
+            className="p-1 rounded-full hover:bg-gray-100 text-gray-500 hover:text-green-600 transition-colors"
+            title="Share with users"
+          >
+            <UserPlus className="h-4 w-4" />
+          </button>
+
           {(onEdit || onDelete) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -130,6 +201,10 @@ export function TaskCard({ task, onEdit, onDelete }: TaskCardProps) {
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-40">
+                <DropdownMenuItem onClick={handleShareViaGmail}>
+                  <Mail className="h-4 w-4 mr-2" />
+                  Share via Gmail
+                </DropdownMenuItem>
                 {onEdit && (
                   <DropdownMenuItem onClick={() => onEdit(task)}>
                     Edit
@@ -140,7 +215,7 @@ export function TaskCard({ task, onEdit, onDelete }: TaskCardProps) {
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       className="text-red-500 focus:text-red-500"
-                      onClick={() => onDelete(task.id)}
+                      onClick={() => onDelete(task._id)}
                     >
                       Delete
                     </DropdownMenuItem>
@@ -151,6 +226,7 @@ export function TaskCard({ task, onEdit, onDelete }: TaskCardProps) {
           )}
         </div>
       </div>
+      <ShareTaskModal open={shareModalOpen} onOpenChange={setShareModalOpen} task={task} />
     </div>
   );
 }
